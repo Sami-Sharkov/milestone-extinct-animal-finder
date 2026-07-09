@@ -18,6 +18,7 @@ namespace SpeciesDetector
         private void Application_Startup(object sender, StartupEventArgs e)
         {
             VideoOS.Platform.SDK.Environment.Initialize();
+            VideoOS.Platform.SDK.Media.Environment.Initialize();
             VideoOS.Platform.SDK.UI.Environment.Initialize();
 
             var connected = false;

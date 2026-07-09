@@ -1,0 +1,12 @@
+# .NET
+[Bb]in/
+[Oo]bj/
+*.user
+
+# Python
+venv/
+__pycache__/
+*.pt
+
+# Application specifics
+snapshots/

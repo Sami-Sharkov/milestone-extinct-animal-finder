@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SpeciesDetector")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9b837ccb848f0616a05e7e64405ca5f7e1ff59ca")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+600d5fff5bc4a572dbde2e305e8f9b096086a528")]
 [assembly: System.Reflection.AssemblyProductAttribute("SpeciesDetector")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SpeciesDetector")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
