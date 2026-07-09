@@ -1,0 +1,66 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\Sami\\Documents\\milestones\\extinct an finder\\milestone-extinct-animal-finder\\SpeciesDetector\\SpeciesDetector.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\Sami\\Documents\\milestones\\extinct an finder\\milestone-extinct-animal-finder\\SpeciesDetector\\SpeciesDetector.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\Sami\\Documents\\milestones\\extinct an finder\\milestone-extinct-animal-finder\\SpeciesDetector\\SpeciesDetector.csproj",
+        "projectName": "SpeciesDetector",
+        "projectPath": "C:\\Users\\Sami\\Documents\\milestones\\extinct an finder\\milestone-extinct-animal-finder\\SpeciesDetector\\SpeciesDetector.csproj",
+        "packagesPath": "C:\\Users\\Sami\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\Sami\\Documents\\milestones\\extinct an finder\\milestone-extinct-animal-finder\\SpeciesDetector\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\Sami\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net4.7.2"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net4.7.2": {
+            "framework": "net472",
+            "targetAlias": "net4.7.2",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net4.7.2": {
+          "framework": "net472",
+          "targetAlias": "net4.7.2",
+          "dependencies": {
+            "MilestoneSystems.VideoOS.Platform.SDK": {
+              "target": "Package",
+              "version": "[26.1.2, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301\\RuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x86": {
+          "#import": []
+        }
+      }
+    }
+  }
+}

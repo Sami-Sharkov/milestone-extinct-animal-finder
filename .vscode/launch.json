@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run SpeciesDetector",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "dotnet run --project SpeciesDetector/SpeciesDetector.csproj --configuration Debug",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
