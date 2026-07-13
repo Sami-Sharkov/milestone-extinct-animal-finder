@@ -28,7 +28,7 @@ namespace SpeciesDetector
         private static readonly string PythonExePath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\venv\Scripts\python.exe"));
         private static readonly string ScriptPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\megadetector_sidecar.py"));
 
-        public static async Task<MegaDetectorResponse> AnalyzeImageAsync(string imagePath)
+        public static async Task<(MegaDetectorResponse result, string rawOutput)> AnalyzeImageAsync(string imagePath)
         {
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Image not found", imagePath);
@@ -46,7 +46,7 @@ namespace SpeciesDetector
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
-                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" > \"{outFile}\" 2>nul\"",
+                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" > \"{outFile}\" 2>&1\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,   //
@@ -83,7 +83,8 @@ namespace SpeciesDetector
                 try
                 {
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    return JsonSerializer.Deserialize<MegaDetectorResponse>(jsonLine, options);
+                    var response = JsonSerializer.Deserialize<MegaDetectorResponse>(jsonLine, options);
+                    return (response, stdout);
                 }
                 catch (Exception ex)
                 {

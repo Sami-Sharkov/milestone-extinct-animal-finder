@@ -36,7 +36,7 @@ namespace SpeciesDetector
         private static readonly string ScriptPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\classifier_sidecar.py"));
         private static readonly string ConfigPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\config.json"));
 
-        public static async Task<ClassificationResponse> ClassifyAnimalAsync(string imagePath, float[] bbox)
+        public static async Task<(ClassificationResponse result, string rawOutput)> ClassifyAnimalAsync(string imagePath, float[] bbox)
         {
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Image not found", imagePath);
@@ -61,7 +61,7 @@ namespace SpeciesDetector
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
-                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" \"{ConfigPath}\" {xmin} {ymin} {xmax} {ymax} > \"{outFile}\" 2>nul\"",
+                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" \"{ConfigPath}\" {xmin} {ymin} {xmax} {ymax} > \"{outFile}\" 2>&1\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -78,14 +78,26 @@ namespace SpeciesDetector
                 var stdout = File.ReadAllText(outFile);
                 System.Diagnostics.Debug.WriteLine($"[Classifier Stdout]: {stdout}");
 
+                string jsonLine = null;
+                foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+                        jsonLine = trimmed;
+                }
+
+                if (jsonLine == null)
+                    throw new InvalidOperationException($"Failed to parse Classifier output — no JSON line found. Raw output: '{stdout}'");
+
                 try
                 {
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    return JsonSerializer.Deserialize<ClassificationResponse>(stdout, options);
+                    var response = JsonSerializer.Deserialize<ClassificationResponse>(jsonLine, options);
+                    return (response, stdout);
                 }
                 catch (Exception ex)
                 {
-                    throw new InvalidOperationException($"Failed to parse Classifier output: '{stdout}'", ex);
+                    throw new InvalidOperationException($"Failed to parse Classifier output: '{jsonLine}' (raw: '{stdout}')", ex);
                 }
             }
             finally

@@ -214,7 +214,10 @@ namespace SpeciesDetector
             {
                 var mdTask = MegaDetectorClient.AnalyzeImageAsync(fullPath);
                 mdTask.Wait(); // Safe to block here, we are on a background Task thread
-                var mdResult = mdTask.Result;
+                var (mdResult, mdRaw) = mdTask.Result;
+
+                // Log the raw Python output for MegaDetector
+                Dispatcher.BeginInvoke(new Action(() => AddLog("  [MegaDetector Output]:\n" + FormatPythonLog(mdRaw))));
 
                 if (mdResult.error != null)
                 {
@@ -256,16 +259,20 @@ namespace SpeciesDetector
                         // model-cache file conflicts that cause cryptic pygments errors.
                         _classifierSemaphore.Wait();
                         ClassificationResponse clsResult;
+                        string clsRaw = "";
                         try
                         {
                             var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
                             classifyTask.Wait();
-                            clsResult = classifyTask.Result;
+                            (clsResult, clsRaw) = classifyTask.Result;
                         }
                         finally
                         {
                             _classifierSemaphore.Release();
                         }
+
+                        // Log the raw Python output for Classifier
+                        Dispatcher.BeginInvoke(new Action(() => AddLog("  [Classifier Output]:\n" + FormatPythonLog(clsRaw))));
 
                         if (clsResult.error != null)
                         {
@@ -340,6 +347,21 @@ namespace SpeciesDetector
             _log.Add(message);
             if (LogList.Items.Count > 0)
                 LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
+        }
+
+        private static string FormatPythonLog(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "    (no output)";
+            var lines = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var result = new System.Text.StringBuilder();
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("{") || trimmed.StartsWith("[")) continue; // skip the json line
+                result.AppendLine("    " + trimmed);
+            }
+            if (result.Length == 0) return "    (no non-JSON output)";
+            return result.ToString().TrimEnd();
         }
 
         private static string SanitizeFileName(string name)
