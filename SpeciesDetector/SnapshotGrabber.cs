@@ -30,6 +30,16 @@ namespace SpeciesDetector
                 throw new ArgumentNullException(nameof(cameraItem));
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            
+            // --- TEST OVERRIDE ---
+            // Use the test image instead of pulling from the actual camera
+            string testImagePath = @"c:\Users\Sami\Documents\milestones\extinct an finder\milestone-extinct-animal-finder\SpeciesDetector\test_image1.png";
+            if (File.Exists(testImagePath))
+            {
+                File.Copy(testImagePath, outputPath, true);
+                return true;
+            }
+            // ---------------------
 
             var gotFrame   = new ManualResetEventSlim(false);
             var jpegSource = new JPEGLiveSource(cameraItem);

@@ -1,5 +1,5 @@
 {
-  "target_species": "Rhodonessa caryophyllacea",
+  "target_species": "Silver-backed Chevrotain",
   "candidate_species": [
     "Rhodonessa caryophyllacea",
     "Anas platyrhynchos",
@@ -9,10 +9,11 @@
     "Canis lupus",
     "Felis catus",
     "Silver-backed Chevrotain",
+    "Puma concolor",
     "Ursus arctos"
   ],
   "country_code": "BGR",
   "confidence_threshold": 0.5,
-  "discord_webhook_url": "",
+  "discord_webhook_url": "https://discord.com/api/webhooks/1526150176652394517/yiTh0tuHx6wbnAbQrHAm0p-Uec786-nC1N1sbcRmmi_Cy1KjQZxk0-yD_OD7fpDsGHP0",
   "save_all_crops": true
 }

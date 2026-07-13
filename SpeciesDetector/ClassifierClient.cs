@@ -50,34 +50,34 @@ namespace SpeciesDetector
             var xmax = bbox[2].ToString(System.Globalization.CultureInfo.InvariantCulture);
             var ymax = bbox[3].ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-            var startInfo = new ProcessStartInfo
+            // Write output to a temp file instead of using stdio pipes.
+            // Pipe-based redirection (UseShellExecute=false) causes Windows to inherit all
+            // open parent handles into the child process. The MIP SDK opens many handles,
+            // which can exhaust system resources and make Process.Start throw
+            // "Not enough system resources to perform this operation".
+            var outFile = Path.GetTempFileName();
+            try
             {
-                FileName = PythonExePath,
-                Arguments = $"\"{ScriptPath}\" \"{imagePath}\" \"{ConfigPath}\" {xmin} {ymin} {xmax} {ymax}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using (var process = Process.Start(startInfo))
-            {
-                if (process == null)
-                    throw new InvalidOperationException("Failed to start python process");
-
-                var stdoutTask = process.StandardOutput.ReadToEndAsync();
-                var stderrTask = process.StandardError.ReadToEndAsync();
-
-                await Task.Run(() => process.WaitForExit());
-
-                var stderr = await stderrTask;
-                if (!string.IsNullOrWhiteSpace(stderr))
+                var startInfo = new ProcessStartInfo
                 {
-                    System.Diagnostics.Debug.WriteLine($"[Classifier Stderr]: {stderr}");
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" \"{ConfigPath}\" {xmin} {ymin} {xmax} {ymax} > \"{outFile}\" 2>nul\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (var process = Process.Start(startInfo))
+                {
+                    if (process == null)
+                        throw new InvalidOperationException("Failed to start python process");
+
+                    await Task.Run(() => process.WaitForExit());
+                    System.Diagnostics.Debug.WriteLine($"[Classifier] Process exited with code {process.ExitCode}");
                 }
 
-                var stdout = await stdoutTask;
-                
+                var stdout = File.ReadAllText(outFile);
+                System.Diagnostics.Debug.WriteLine($"[Classifier Stdout]: {stdout}");
+
                 try
                 {
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -87,6 +87,10 @@ namespace SpeciesDetector
                 {
                     throw new InvalidOperationException($"Failed to parse Classifier output: '{stdout}'", ex);
                 }
+            }
+            finally
+            {
+                try { File.Delete(outFile); } catch { /* best-effort cleanup */ }
             }
         }
     }

@@ -33,44 +33,64 @@ namespace SpeciesDetector
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Image not found", imagePath);
 
-            var startInfo = new ProcessStartInfo
+            // Write output to a temp file instead of using stdio pipes.
+            // Pipe-based redirection (UseShellExecute=false) causes Windows to inherit all
+            // open parent handles into the child process. The MIP SDK opens many handles,
+            // which can exhaust system resources and make Process.Start throw
+            // "Not enough system resources to perform this operation".
+            var outFile = Path.GetTempFileName();
+            try
             {
-                FileName = PythonExePath,
-                Arguments = $"\"{ScriptPath}\" \"{imagePath}\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using (var process = Process.Start(startInfo))
-            {
-                if (process == null)
-                    throw new InvalidOperationException("Failed to start python process");
-
-                // Read stdout and stderr
-                var stdoutTask = process.StandardOutput.ReadToEndAsync();
-                var stderrTask = process.StandardError.ReadToEndAsync();
-
-                await Task.Run(() => process.WaitForExit());
-
-                var stderr = await stderrTask;
-                if (!string.IsNullOrWhiteSpace(stderr))
+                // Wrap the script call in a small cmd snippet that redirects stdout to the
+            // temp file, keeping stderr on the console (or discarded with CreateNoWindow).
+                var startInfo = new ProcessStartInfo
                 {
-                    System.Diagnostics.Debug.WriteLine($"[MegaDetector Stderr]: {stderr}");
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" > \"{outFile}\" 2>nul\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (var process = Process.Start(startInfo))
+                {
+                    if (process == null)
+                        throw new InvalidOperationException("Failed to start python process");
+
+                    await Task.Run(() => process.WaitForExit());
+                    System.Diagnostics.Debug.WriteLine($"[MegaDetector] Process exited with code {process.ExitCode}");
                 }
 
-                var stdout = await stdoutTask;
-                
+                var stdout = File.ReadAllText(outFile);
+                System.Diagnostics.Debug.WriteLine($"[MegaDetector Stdout]: {stdout}");
+
+                // YOLOv5 writes banner lines ("Fusing layers...", "Model summary:", etc.)
+                // directly to the OS-level fd1, bypassing our sys.stdout redirect.
+                // Those lines end up in the temp file before the JSON.
+                // The JSON is always the final print(), so grab the last non-empty line.
+                string jsonLine = null;
+                foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+                        jsonLine = trimmed;
+                }
+
+                if (jsonLine == null)
+                    throw new InvalidOperationException($"Failed to parse MegaDetector output — no JSON line found. Raw output: '{stdout}'");
+
                 try
                 {
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    return JsonSerializer.Deserialize<MegaDetectorResponse>(stdout, options);
+                    return JsonSerializer.Deserialize<MegaDetectorResponse>(jsonLine, options);
                 }
                 catch (Exception ex)
                 {
-                    throw new InvalidOperationException($"Failed to parse MegaDetector output: '{stdout}'", ex);
+                    throw new InvalidOperationException($"Failed to parse MegaDetector output: '{jsonLine}' (raw: '{stdout}')", ex);
                 }
+            }
+            finally
+            {
+                try { File.Delete(outFile); } catch { /* best-effort cleanup */ }
             }
         }
     }

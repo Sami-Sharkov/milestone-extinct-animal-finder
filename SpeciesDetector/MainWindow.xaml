@@ -29,9 +29,11 @@
 
         <!-- Footer -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
-            <TextBlock x:Name="CountText" Text="Events received: 0" FontSize="11" Foreground="#6C7086" Margin="0,0,15,0"/>
-            <TextBlock x:Name="AnimalCountText" Text="Animals detected: 0" FontSize="11" Foreground="#89B4FA" Margin="0,0,15,0"/>
-            <TextBlock x:Name="TargetCountText" Text="Targets matched: 0" FontSize="11" Foreground="#F38BA8" FontWeight="Bold"/>
+            <Button x:Name="TestSnapshotBtn" Content="📷 Test Snapshot" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Padding="10,2" Margin="0,0,15,0" Click="TestSnapshotBtn_Click"/>
+            <CheckBox x:Name="AutoPollCheckbox" Content="Auto Poll (10s)" Foreground="#CDD6F4" VerticalAlignment="Center" Margin="0,0,15,0" Checked="AutoPollCheckbox_CheckedChanged" Unchecked="AutoPollCheckbox_CheckedChanged"/>
+            <TextBlock x:Name="CountText" Text="Events received: 0" FontSize="11" Foreground="#6C7086" VerticalAlignment="Center" Margin="0,0,15,0"/>
+            <TextBlock x:Name="AnimalCountText" Text="Animals detected: 0" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center" Margin="0,0,15,0"/>
+            <TextBlock x:Name="TargetCountText" Text="Targets matched: 0" FontSize="11" Foreground="#F38BA8" FontWeight="Bold" VerticalAlignment="Center"/>
         </StackPanel>
     </Grid>
 </Window>

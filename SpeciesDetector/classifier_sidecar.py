@@ -37,49 +37,54 @@ def main():
         logging.getLogger().setLevel(logging.ERROR)
         
         # We import here so it doesn't slow down arg parsing/validation
-        from speciesnet.scripts.run_model import run_model
-        from pybioclip import BioClip
+        from speciesnet import SpeciesNet
+        from speciesnet.utils import prepare_instances_dict
         
         # 1. Crop image
-        img = Image.open(image_path)
+        img = Image.open(image_path).convert("RGB")
         img_w, img_h = img.size
-        # The bbox from MegaDetector is normalized [0, 1]
-        abs_xmin = int(xmin * img_w)
-        abs_ymin = int(ymin * img_h)
-        abs_xmax = int(xmax * img_w)
-        abs_ymax = int(ymax * img_h)
+        # The bbox from MegaDetector is already in absolute pixels
+        abs_xmin = int(xmin)
+        abs_ymin = int(ymin)
+        abs_xmax = int(xmax)
+        abs_ymax = int(ymax)
         
         crop_img = img.crop((abs_xmin, abs_ymin, abs_xmax, abs_ymax))
         
         crop_path = os.path.join(os.path.dirname(image_path), f"crop_{os.path.basename(image_path)}")
-        if config.get("save_all_crops", True):
-            crop_img.save(crop_path)
+        crop_img.save(crop_path)
             
         # 2. SpeciesNet
         sys.stderr.write("Running SpeciesNet...\n")
         country = config.get("country_code", None)
-        snet_preds = run_model([crop_path], country=country)
-        # snet_preds is usually a list of dicts or similar, depending on the library version.
-        # Assuming it returns a list of dictionaries with 'label' and 'score' or similar structure.
-        # For this prototype we will fake a mock output if the API changes, but let's assume it returns a dict.
+        instances_dict = prepare_instances_dict(filepaths=[crop_path], country=country)
+        
+        from speciesnet import DEFAULT_MODEL
+        model = SpeciesNet(DEFAULT_MODEL, components="classifier")
+        preds = model.classify(instances_dict=instances_dict)
+        
         snet_top = None
         snet_conf = 0.0
-        if isinstance(snet_preds, list) and len(snet_preds) > 0:
-            if hasattr(snet_preds[0], 'top_prediction'):
-                snet_top = snet_preds[0].top_prediction.name
-                snet_conf = snet_preds[0].top_prediction.score
-            elif isinstance(snet_preds[0], dict) and 'predictions' in snet_preds[0]:
-                snet_top = snet_preds[0]['predictions'][0]['name']
-                snet_conf = snet_preds[0]['predictions'][0]['score']
+        
+        if preds and crop_path in preds:
+            crop_preds = preds[crop_path]
+            if "classifications" in crop_preds:
+                classes = crop_preds["classifications"].get("classes", [])
+                scores = crop_preds["classifications"].get("scores", [])
+                if classes and scores:
+                    snet_top = classes[0]
+                    snet_conf = scores[0]
 
         # 3. BioCLIP
         sys.stderr.write("Running BioCLIP...\n")
-        bc = BioClip()
+        from bioclip import CustomLabelsClassifier
         candidates = config.get("candidate_species", [])
         if not candidates:
             candidates = [config.get("target_species", "Animal")]
             
-        bc_results = bc.predict(crop_img, candidates)
+        bc = CustomLabelsClassifier(candidates)
+        # bioclip predict expects a file path or list of paths
+        bc_results = bc.predict(crop_path)
         
         target_species = config.get("target_species")
         bc_top = None
@@ -87,10 +92,16 @@ def main():
         bc_target_score = 0.0
         
         if bc_results:
-            bc_top = bc_results[0]['label']
-            bc_top_score = bc_results[0]['score']
+            # Check if it returns a list of dicts (like [{"classification": "cat", "score": 0.9}])
+            # bioclip typically returns a list of dicts with 'classification' or 'label' and 'score'
+            # We'll handle both just in case.
+            first_res = bc_results[0]
+            label_key = 'classification' if 'classification' in first_res else 'label'
+            
+            bc_top = first_res[label_key]
+            bc_top_score = first_res['score']
             for res in bc_results:
-                if res['label'] == target_species:
+                if res[label_key] == target_species:
                     bc_target_score = res['score']
                     break
 

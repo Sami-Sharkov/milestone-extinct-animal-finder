@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using VideoOS.Platform;
 using VideoOS.Platform.EventsAndState;
 
@@ -13,6 +14,12 @@ namespace SpeciesDetector
     {
         private readonly ObservableCollection<string> _log = new ObservableCollection<string>();
         private int _eventCount = 0;
+        private DispatcherTimer _pollTimer;
+
+        // Serialize classifier calls — SpeciesNet caches models to disk and crashes
+        // if two processes try to initialize simultaneously from the same venv.
+        private static readonly System.Threading.SemaphoreSlim _classifierSemaphore =
+            new System.Threading.SemaphoreSlim(1, 1);
 
         // Snapshots land here, relative to wherever the exe runs from.
         private static readonly string SnapshotFolder =
@@ -22,6 +29,10 @@ namespace SpeciesDetector
         {
             InitializeComponent();
             LogList.ItemsSource = _log;
+            
+            _pollTimer = new DispatcherTimer();
+            _pollTimer.Interval = TimeSpan.FromSeconds(10);
+            _pollTimer.Tick += PollTimer_Tick;
 
             if (App.DataModel != null)
             {
@@ -214,9 +225,20 @@ namespace SpeciesDetector
                             logLine = "  ↳ Running SpeciesNet & BioCLIP classification...";
                             Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
 
-                            var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
-                            classifyTask.Wait();
-                            var clsResult = classifyTask.Result;
+                            // Serialize: only one SpeciesNet process at a time to avoid
+                            // model-cache file conflicts that cause cryptic pygments errors.
+                            _classifierSemaphore.Wait();
+                            ClassificationResponse clsResult;
+                            try
+                            {
+                                var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
+                                classifyTask.Wait();
+                                clsResult = classifyTask.Result;
+                            }
+                            finally
+                            {
+                                _classifierSemaphore.Release();
+                            }
 
                             if (clsResult.error != null)
                             {
@@ -255,6 +277,13 @@ namespace SpeciesDetector
                 {
                     logLine = $"  ↳ Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s)";
                 }
+            }
+            catch (AggregateException aggEx)
+            {
+                // Unwrap AggregateException so we see the real inner error, not
+                // the generic "One or more errors occurred" wrapper message.
+                var inner = aggEx.InnerException ?? aggEx;
+                logLine = $"  ↳ Snapshot ERROR: {inner.Message}";
             }
             catch (Exception ex)
             {
@@ -296,6 +325,74 @@ namespace SpeciesDetector
             foreach (var c in Path.GetInvalidFileNameChars())
                 name = name.Replace(c, '_');
             return name;
+        }
+
+        private void AutoPollCheckbox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            if (AutoPollCheckbox.IsChecked == true)
+            {
+                _pollTimer.Start();
+                AddLog("Auto-polling started (10s interval).");
+            }
+            else
+            {
+                _pollTimer.Stop();
+                AddLog("Auto-polling stopped.");
+            }
+        }
+
+        private void TestSnapshotBtn_Click(object sender, RoutedEventArgs e)
+        {
+            AddLog("Manual snapshot triggered...");
+            TriggerSnapshotsOnAllCameras();
+        }
+
+        private void PollTimer_Tick(object sender, EventArgs e)
+        {
+            AddLog("Auto-poll triggered...");
+            TriggerSnapshotsOnAllCameras();
+        }
+
+        private void TriggerSnapshotsOnAllCameras()
+        {
+            var cameras = GetAllCameras();
+            if (cameras.Count == 0)
+            {
+                AddLog("No cameras found in configuration.");
+                return;
+            }
+
+            foreach (var cam in cameras)
+            {
+                var guid = cam.FQID.ObjectId;
+                var timestamp = DateTime.UtcNow;
+                Task.Run(() => GrabSnapshot(guid, timestamp));
+            }
+        }
+
+        private List<Item> GetAllCameras(Item parentItem = null)
+        {
+            var cameras = new List<Item>();
+            try
+            {
+                var children = parentItem == null ? Configuration.Instance.GetItems() : parentItem.GetChildren();
+                if (children != null)
+                {
+                    foreach (var child in children)
+                    {
+                        if (child.FQID.Kind == Kind.Camera)
+                        {
+                            cameras.Add(child);
+                        }
+                        cameras.AddRange(GetAllCameras(child));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetAllCameras error: {ex.Message}");
+            }
+            return cameras;
         }
     }
 }
