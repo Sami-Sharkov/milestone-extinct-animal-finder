@@ -27,12 +27,19 @@ namespace SpeciesDetector
 
             if (!connected)
             {
-                Shutdown();
-                return;
+                var result = MessageBox.Show("Failed to connect to Milestone. Do you want to continue in Offline Test Mode?", "Offline Mode", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (result == MessageBoxResult.No)
+                {
+                    Shutdown();
+                    return;
+                }
+                DataModel = null;
             }
-
-            var loginSettings = LoginSettingsCache.GetLoginSettings(EnvironmentManager.Instance.MasterSite);
-            DataModel = new DataModel(loginSettings);
+            else
+            {
+                var loginSettings = LoginSettingsCache.GetLoginSettings(EnvironmentManager.Instance.MasterSite);
+                DataModel = new DataModel(loginSettings);
+            }
         }
 
         private void Application_Exit(object sender, ExitEventArgs e)

@@ -42,13 +42,15 @@ namespace SpeciesDetector
             try
             {
                 // Wrap the script call in a small cmd snippet that redirects stdout to the
-            // temp file, keeping stderr on the console (or discarded with CreateNoWindow).
+                // temp file, keeping stderr on the console (or discarded with CreateNoWindow).
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
                     Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" > \"{outFile}\" 2>nul\"",
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,   //
+                    RedirectStandardError = true
                 };
 
                 using (var process = Process.Start(startInfo))

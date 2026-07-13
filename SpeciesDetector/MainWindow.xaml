@@ -29,6 +29,7 @@
 
         <!-- Footer -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+            <Button x:Name="TestLocalImageBtn" Content="📁 Test Local Image" Background="#A6E3A1" Foreground="#11111B" FontWeight="Bold" Padding="10,2" Margin="0,0,15,0" Click="TestLocalImageBtn_Click"/>
             <Button x:Name="TestSnapshotBtn" Content="📷 Test Snapshot" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Padding="10,2" Margin="0,0,15,0" Click="TestSnapshotBtn_Click"/>
             <CheckBox x:Name="AutoPollCheckbox" Content="Auto Poll (10s)" Foreground="#CDD6F4" VerticalAlignment="Center" Margin="0,0,15,0" Checked="AutoPollCheckbox_CheckedChanged" Unchecked="AutoPollCheckbox_CheckedChanged"/>
             <TextBlock x:Name="CountText" Text="Events received: 0" FontSize="11" Foreground="#6C7086" VerticalAlignment="Center" Margin="0,0,15,0"/>

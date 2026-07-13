@@ -182,100 +182,12 @@ namespace SpeciesDetector
 
                 if (saved)
                 {
-                    logLine = $"  ↳ Snapshot saved: {fullPath}. Running MegaDetector...";
-                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-
-                    // Call Python sidecar
-                    var mdTask = MegaDetectorClient.AnalyzeImageAsync(fullPath);
-                    mdTask.Wait(); // Safe to block here, we are on a background Task thread
-                    var mdResult = mdTask.Result;
-
-                    if (mdResult.error != null)
-                    {
-                        logLine = $"  ↳ MegaDetector ERROR: {mdResult.error}";
-                    }
-                    else
-                    {
-                        bool animalDetected = false;
-                        float highestConfidence = 0;
-                        float[] bestBbox = null;
-
-                        if (mdResult.detections != null)
-                        {
-                            foreach (var det in mdResult.detections)
-                            {
-                                // In typical YOLOv5 0-indexed, Class 0 is Animal (for MegaDetector)
-                                if (det.class_id == 0 && det.confidence > 0.6f)
-                                {
-                                    animalDetected = true;
-                                    if (det.confidence > highestConfidence)
-                                    {
-                                        highestConfidence = det.confidence;
-                                        bestBbox = det.bbox;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (animalDetected)
-                        {
-                            logLine = $"  ★★★ ANIMAL DETECTED! (Confidence: {highestConfidence:P1}) ★★★";
-                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                            
-                            logLine = "  ↳ Running SpeciesNet & BioCLIP classification...";
-                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-
-                            // Serialize: only one SpeciesNet process at a time to avoid
-                            // model-cache file conflicts that cause cryptic pygments errors.
-                            _classifierSemaphore.Wait();
-                            ClassificationResponse clsResult;
-                            try
-                            {
-                                var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
-                                classifyTask.Wait();
-                                clsResult = classifyTask.Result;
-                            }
-                            finally
-                            {
-                                _classifierSemaphore.Release();
-                            }
-
-                            if (clsResult.error != null)
-                            {
-                                logLine = $"  ↳ Classifier ERROR: {clsResult.error}";
-                            }
-                            else
-                            {
-                                string snetGuess = clsResult.speciesnet?.top_species ?? "Unknown";
-                                logLine = $"  ↳ SpeciesNet guess: {snetGuess} ({clsResult.speciesnet?.confidence ?? 0:P1})";
-                                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-
-                                if (clsResult.bioclip?.target_match == true)
-                                {
-                                    logLine = $"  🎯 TARGET SPECIES DETECTED! Score: {clsResult.bioclip.target_score:P1}";
-                                    if (clsResult.discord_sent)
-                                        logLine += " [Discord Alert Sent]";
-                                    
-                                    // Update counter on UI thread
-                                    Dispatcher.BeginInvoke(new Action(() => IncrementTargetCount()));
-                                }
-                                else
-                                {
-                                    logLine = $"  ↳ Target species not matched. Top BioCLIP guess: {clsResult.bioclip?.top_species} ({clsResult.bioclip?.top_score ?? 0:P1})";
-                                }
-                                
-                                Dispatcher.BeginInvoke(new Action(() => IncrementAnimalCount()));
-                            }
-                        }
-                        else
-                        {
-                            logLine = $"  ↳ No animal detected (False positive / empty frame).";
-                        }
-                    }
+                    ProcessImageFile(fullPath);
                 }
                 else
                 {
                     logLine = $"  ↳ Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s)";
+                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
                 }
             }
             catch (AggregateException aggEx)
@@ -284,14 +196,124 @@ namespace SpeciesDetector
                 // the generic "One or more errors occurred" wrapper message.
                 var inner = aggEx.InnerException ?? aggEx;
                 logLine = $"  ↳ Snapshot ERROR: {inner.Message}";
+                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
             }
             catch (Exception ex)
             {
                 logLine = $"  ↳ Snapshot ERROR: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
             }
+        }
 
-            // Marshal back to UI thread for the log list
+        private void ProcessImageFile(string fullPath)
+        {
+            string logLine = $"  ↳ Processing image: {fullPath}. Running MegaDetector...";
             Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+
+            try
+            {
+                var mdTask = MegaDetectorClient.AnalyzeImageAsync(fullPath);
+                mdTask.Wait(); // Safe to block here, we are on a background Task thread
+                var mdResult = mdTask.Result;
+
+                if (mdResult.error != null)
+                {
+                    logLine = $"  ↳ MegaDetector ERROR: {mdResult.error}";
+                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                }
+                else
+                {
+                    bool animalDetected = false;
+                    float highestConfidence = 0;
+                    float[] bestBbox = null;
+
+                    if (mdResult.detections != null)
+                    {
+                        foreach (var det in mdResult.detections)
+                        {
+                            // In typical YOLOv5 0-indexed, Class 0 is Animal (for MegaDetector)
+                            if (det.class_id == 0 && det.confidence > 0.6f)
+                            {
+                                animalDetected = true;
+                                if (det.confidence > highestConfidence)
+                                {
+                                    highestConfidence = det.confidence;
+                                    bestBbox = det.bbox;
+                                }
+                            }
+                        }
+                    }
+
+                    if (animalDetected)
+                    {
+                        logLine = $"  ★★★ ANIMAL DETECTED! (Confidence: {highestConfidence:P1}) ★★★";
+                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                        
+                        logLine = "  ↳ Running SpeciesNet & BioCLIP classification...";
+                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+
+                        // Serialize: only one SpeciesNet process at a time to avoid
+                        // model-cache file conflicts that cause cryptic pygments errors.
+                        _classifierSemaphore.Wait();
+                        ClassificationResponse clsResult;
+                        try
+                        {
+                            var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
+                            classifyTask.Wait();
+                            clsResult = classifyTask.Result;
+                        }
+                        finally
+                        {
+                            _classifierSemaphore.Release();
+                        }
+
+                        if (clsResult.error != null)
+                        {
+                            logLine = $"  ↳ Classifier ERROR: {clsResult.error}";
+                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                        }
+                        else
+                        {
+                            string snetGuess = clsResult.speciesnet?.top_species ?? "Unknown";
+                            logLine = $"  ↳ SpeciesNet guess: {snetGuess} ({clsResult.speciesnet?.confidence ?? 0:P1})";
+                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+
+                            if (clsResult.bioclip?.target_match == true)
+                            {
+                                logLine = $"  🎯 TARGET SPECIES DETECTED! Score: {clsResult.bioclip.target_score:P1}";
+                                if (clsResult.discord_sent)
+                                    logLine += " [Discord Alert Sent]";
+                                
+                                // Update counter on UI thread
+                                Dispatcher.BeginInvoke(new Action(() => IncrementTargetCount()));
+                            }
+                            else
+                            {
+                                logLine = $"  ↳ Target species not matched. Top BioCLIP guess: {clsResult.bioclip?.top_species} ({clsResult.bioclip?.top_score ?? 0:P1})";
+                            }
+                            
+                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                            Dispatcher.BeginInvoke(new Action(() => IncrementAnimalCount()));
+                        }
+                    }
+                    else
+                    {
+                        logLine = $"  ↳ No animal detected (False positive / empty frame).";
+                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                    }
+                }
+            }
+            catch (AggregateException aggEx)
+            {
+                var inner = aggEx.InnerException ?? aggEx;
+                logLine = $"  ↳ Processing ERROR: {inner.Message}";
+                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+            }
+            catch (Exception ex)
+            {
+                logLine = $"  ↳ Processing ERROR: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+            }
         }
 
         // -----------------------------------------------------------------------
@@ -338,6 +360,18 @@ namespace SpeciesDetector
             {
                 _pollTimer.Stop();
                 AddLog("Auto-polling stopped.");
+            }
+        }
+
+        private void TestLocalImageBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog();
+            dlg.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp|All Files|*.*";
+            if (dlg.ShowDialog() == true)
+            {
+                var fullPath = dlg.FileName;
+                AddLog($"Manual test triggered for local image: {fullPath}");
+                Task.Run(() => ProcessImageFile(fullPath));
             }
         }
 
