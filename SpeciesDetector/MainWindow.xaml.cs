@@ -1,3 +1,4 @@
+#pragma warning disable CS4014
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -13,13 +14,11 @@ namespace SpeciesDetector
     public partial class MainWindow : Window
     {
         private readonly ObservableCollection<string> _log = new ObservableCollection<string>();
-        private int _eventCount = 0;
-        private DispatcherTimer _pollTimer;
+        private int _eventCount  = 0;
+        private int _animalCount = 0;
+        private int _targetCount = 0;
 
-        // Serialize classifier calls — SpeciesNet caches models to disk and crashes
-        // if two processes try to initialize simultaneously from the same venv.
-        private static readonly System.Threading.SemaphoreSlim _classifierSemaphore =
-            new System.Threading.SemaphoreSlim(1, 1);
+        private DispatcherTimer _pollTimer;
 
         // Snapshots land here, relative to wherever the exe runs from.
         private static readonly string SnapshotFolder =
@@ -29,24 +28,55 @@ namespace SpeciesDetector
         {
             InitializeComponent();
             LogList.ItemsSource = _log;
-            
-            _pollTimer = new DispatcherTimer();
-            _pollTimer.Interval = TimeSpan.FromSeconds(10);
-            _pollTimer.Tick += PollTimer_Tick;
 
-            if (App.DataModel != null)
-            {
-                Loaded += MainWindow_Loaded;
-            }
-            else
-            {
-                StatusText.Text = "Not connected — DataModel is null.";
-            }
+            // Show the actual target species from config
+            TargetSpeciesText.Text = $"Target: {App.Config.TargetSpecies}";
+
+            _pollTimer          = new DispatcherTimer();
+            _pollTimer.Interval = TimeSpan.FromSeconds(10);
+            _pollTimer.Tick    += PollTimer_Tick;
+
+            Loaded += MainWindow_Loaded;
         }
+
+        // -----------------------------------------------------------------------
+        // Startup: ensure detection server is running, then subscribe to events
+        // -----------------------------------------------------------------------
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            AddLog("Connected to Milestone. Looking up motion event type...");
+            // ── Step 1: start / verify the Python detection server ───────────
+            StatusText.Text       = "Starting detection server...";
+            ServerStatusText.Text = "Detection server: starting...";
+            AddLog("Checking detection server — this may take ~60 s on first run (loading models)...");
+
+            bool serverReady = await DetectionServerManager.EnsureRunningAsync(msg =>
+                Dispatcher.BeginInvoke(new Action(() => AddLog(msg))));
+
+            if (!serverReady)
+            {
+                AddLog("ERROR: Detection server did not start. Check that the venv exists and requirements.txt is installed.");
+                AddLog("You can also start the server manually: run start_server.bat, then restart this app.");
+                ServerStatusText.Text = "Detection server: OFFLINE";
+                StatusText.Text       = "Detection server failed — see log.";
+                AddLog("WARNING: You can still use 'Test Local Image' to process images if the server is already running.");
+                // Don't return — let the user still test local images manually
+            }
+            else
+            {
+                ServerStatusText.Text = "Detection server: ready";
+                AddLog("Detection server is ready.");
+            }
+
+            // ── Step 2: connect to Milestone and subscribe to motion events ──
+            if (App.DataModel == null)
+            {
+                StatusText.Text = "Offline mode — no live events. Use buttons below to test.";
+                AddLog("Running in offline mode — live motion events disabled.");
+                return;
+            }
+
+            AddLog("Looking up motion event type...");
             StatusText.Text = "Looking up motion event type...";
 
             Guid? motionEventTypeId;
@@ -64,7 +94,7 @@ namespace SpeciesDetector
             if (motionEventTypeId == null)
             {
                 AddLog("Could not find a motion event type by name.");
-                AddLog("Check the Debug Output window (View → Output → Debug) for the full list of event type names your camera driver exposes, and report them back.");
+                AddLog("Check the Debug Output window for the full list of event type names exposed by your camera driver.");
                 StatusText.Text = "Motion event type not found — check Output window.";
                 return;
             }
@@ -95,7 +125,7 @@ namespace SpeciesDetector
         }
 
         // -----------------------------------------------------------------------
-        // Motion event → snapshot
+        // Motion event handler
         // -----------------------------------------------------------------------
 
         private void OnEventsReceived(object sender, IEnumerable<Event> events)
@@ -103,297 +133,237 @@ namespace SpeciesDetector
             foreach (var evt in events)
             {
                 _eventCount++;
-                CountText.Text = $"Events received: {_eventCount}";
+                CountText.Text = $"Events: {_eventCount}";
 
-                // evt.Source is a REST resource path, e.g. "cameras/3fa85f64-..."
-                // We need the GUID part to look up the Item.
                 var cameraGuid = ExtractCameraGuid(evt.Source);
-
-                string cameraLabel = cameraGuid.HasValue
-                    ? cameraGuid.Value.ToString("D").Substring(0, 8) + "…"
-                    : evt.Source;
-
                 AddLog($"[{evt.Time:HH:mm:ss}] Motion on {evt.Source}");
 
                 if (cameraGuid == null)
                 {
-                    AddLog($"  ↳ Source '{evt.Source}' is not a camera — skipping snapshot.");
+                    AddLog($"  Source '{evt.Source}' is not a camera GUID — skipping.");
                     continue;
                 }
 
-                // Kick off snapshot grab on a background thread so the UI doesn't freeze.
-                // We capture the values we need before the lambda runs.
                 var guid      = cameraGuid.Value;
                 var timestamp = evt.Time;
-                Task.Run(() => GrabSnapshot(guid, timestamp));
+                // Fire and forget on a thread-pool thread (non-blocking for the event thread)
+                _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
         }
 
-        /// <summary>
-        /// Parses the GUID out of a source path like "cameras/{guid}" or
-        /// "cameras/{guid}/streams/{stream-guid}".
-        /// Returns null if the source is not a camera resource.
-        /// </summary>
-        private static Guid? ExtractCameraGuid(string source)
+        // -----------------------------------------------------------------------
+        // Snapshot grab → full async pipeline
+        // -----------------------------------------------------------------------
+
+        private async Task GrabSnapshotAsync(Guid cameraGuid, DateTime eventTime)
         {
-            if (string.IsNullOrEmpty(source))
-                return null;
-
-            // REST resource path format: "cameras/<guid>" or "cameras/<guid>/..."
-            const string prefix = "cameras/";
-            if (!source.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            // Take just the segment right after "cameras/"
-            var after = source.Substring(prefix.Length);
-            var slash = after.IndexOf('/');
-            var guidStr = slash >= 0 ? after.Substring(0, slash) : after;
-
-            return Guid.TryParse(guidStr, out var g) ? g : (Guid?)null;
-        }
-
-        /// <summary>
-        /// Looks up the camera Item by GUID, grabs one JPEG frame, saves it,
-        /// and logs the result back on the UI thread.
-        /// Must be called on a background thread (blocks while waiting for frame).
-        /// </summary>
-        private void GrabSnapshot(Guid cameraGuid, DateTime eventTime)
-        {
-            string logLine;
             try
             {
-                // Configuration.Instance.GetItem() is the standard SDK call to resolve
-                // a GUID + Kind to an Item — confirmed pattern from ConfigApiClient sample.
                 var cameraItem = Configuration.Instance.GetItem(cameraGuid, Kind.Camera);
                 if (cameraItem == null)
                 {
-                    logLine = $"  ↳ Camera {cameraGuid:D} not found in configuration — skipping.";
-                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                    Log($"  Camera {cameraGuid:D} not found in configuration — skipping.");
                     return;
                 }
 
-                // Build a filename: "<camera-name>_<timestamp>.jpg"
-                // Sanitize the camera name for use as a filename.
-                var safeName = SanitizeFileName(cameraItem.Name);
-                var filename = $"{safeName}_{eventTime:yyyyMMdd_HHmmss_fff}.jpg";
-                var fullPath = Path.Combine(SnapshotFolder, filename);
+                var safeName  = SanitizeFileName(cameraItem.Name);
+                var filename  = $"{safeName}_{eventTime:yyyyMMdd_HHmmss_fff}.jpg";
+                var fullPath  = Path.Combine(SnapshotFolder, filename);
 
-                bool saved = SnapshotGrabber.GrabAndSave(cameraItem, fullPath);
+                bool saved = await Task.Run(() => SnapshotGrabber.GrabAndSave(cameraItem, fullPath));
 
                 if (saved)
-                {
-                    ProcessImageFile(fullPath);
-                }
+                    await ProcessImageAsync(fullPath, cameraItem.Name, eventTime);
                 else
-                {
-                    logLine = $"  ↳ Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s)";
-                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                }
+                    Log($"  Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s)");
             }
             catch (AggregateException aggEx)
             {
-                // Unwrap AggregateException so we see the real inner error, not
-                // the generic "One or more errors occurred" wrapper message.
                 var inner = aggEx.InnerException ?? aggEx;
-                logLine = $"  ↳ Snapshot ERROR: {inner.Message}";
-                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                Log($"  Snapshot ERROR: {inner.Message}");
             }
             catch (Exception ex)
             {
-                logLine = $"  ↳ Snapshot ERROR: {ex.Message}";
-                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                Log($"  Snapshot ERROR: {ex.Message}");
             }
         }
 
-        private void ProcessImageFile(string fullPath)
+        // -----------------------------------------------------------------------
+        // Core processing pipeline: MegaDetector → Classify → Discord
+        // -----------------------------------------------------------------------
+
+        private async Task ProcessImageAsync(string fullPath, string cameraName, DateTime eventTime)
         {
-            string logLine = $"  ↳ Processing image: {fullPath}. Running MegaDetector...";
-            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+            Log($"  Processing: {Path.GetFileName(fullPath)} — running MegaDetector...");
 
             try
             {
-                var mdTask = MegaDetectorClient.AnalyzeImageAsync(fullPath);
-                mdTask.Wait(); // Safe to block here, we are on a background Task thread
-                var (mdResult, mdRaw) = mdTask.Result;
-
-                // Log the raw Python output for MegaDetector
-                Dispatcher.BeginInvoke(new Action(() => AddLog("  [MegaDetector Output]:\n" + FormatPythonLog(mdRaw))));
-
-                if (mdResult.error != null)
+                // ── MegaDetector ─────────────────────────────────────────────
+                MegaDetectorResponse mdResult;
+                try
                 {
-                    logLine = $"  ↳ MegaDetector ERROR: {mdResult.error}";
-                    Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                    mdResult = await MegaDetectorClient.AnalyzeImageAsync(fullPath);
+                }
+                catch (Exception ex)
+                {
+                    Log($"  MegaDetector ERROR: {ex.Message}");
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(mdResult?.error))
+                {
+                    Log($"  MegaDetector server error: {mdResult.error}");
+                    return;
+                }
+
+                // Find the best animal detection (class 0 = animal in MegaDetector)
+                bool   animalDetected     = false;
+                float  highestConfidence  = 0;
+                float[] bestBbox          = null;
+
+                if (mdResult?.detections != null)
+                {
+                    foreach (var det in mdResult.detections)
+                    {
+                        if (det.class_id == 0 && det.confidence > 0.6f)
+                        {
+                            animalDetected = true;
+                            if (det.confidence > highestConfidence)
+                            {
+                                highestConfidence = det.confidence;
+                                bestBbox          = det.bbox;
+                            }
+                        }
+                    }
+                }
+
+                if (!animalDetected)
+                {
+                    Log($"  No animal detected (false positive / empty frame).");
+                    return;
+                }
+
+                Log($"  ANIMAL DETECTED! (MegaDetector confidence: {highestConfidence:P1})");
+                Log($"  Running SpeciesNet & BioCLIP classification...");
+
+                // ── Classifier ────────────────────────────────────────────────
+                ClassificationResponse clsResult;
+                try
+                {
+                    clsResult = await ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox, App.Config);
+                }
+                catch (Exception ex)
+                {
+                    Log($"  Classifier ERROR: {ex.Message}");
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(clsResult?.error))
+                {
+                    Log($"  Classifier server error: {clsResult.error}");
+                    return;
+                }
+
+                Dispatcher.BeginInvoke(new Action(IncrementAnimalCount));
+
+                string snetGuess = clsResult.speciesnet?.top_species ?? "unknown";
+                float  snetConf  = clsResult.speciesnet?.confidence  ?? 0f;
+                Log($"  SpeciesNet: {snetGuess} ({snetConf:P1})");
+
+                bool  targetMatch  = clsResult.bioclip?.target_match  ?? false;
+                float bioclipScore = clsResult.bioclip?.target_score  ?? 0f;
+                string bcTopSpecies = clsResult.bioclip?.top_species ?? "unknown";
+                float  bcTopScore   = clsResult.bioclip?.top_score   ?? 0f;
+
+                if (targetMatch)
+                {
+                    Log($"  TARGET SPECIES MATCHED! BioCLIP score: {bioclipScore:P1}");
+                    Dispatcher.BeginInvoke(new Action(IncrementTargetCount));
+
+                    // ── Save crop to snapshots folder ─────────────────────────
+                    byte[] cropBytes  = null;
+                    string cropFile   = null;
+                    if (!string.IsNullOrEmpty(clsResult.crop_b64))
+                    {
+                        try
+                        {
+                            cropBytes = Convert.FromBase64String(clsResult.crop_b64);
+                            cropFile  = $"crop_{Path.GetFileName(fullPath)}";
+                            var cropPath = Path.Combine(SnapshotFolder, cropFile);
+                            Directory.CreateDirectory(SnapshotFolder);
+                            File.WriteAllBytes(cropPath, cropBytes);
+                            Log($"  Crop saved: {cropPath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log($"  WARNING: Could not decode/save crop: {ex.Message}");
+                        }
+                    }
+
+                    // ── Discord alert ─────────────────────────────────────────
+                    if (!string.IsNullOrEmpty(App.Config.DiscordWebhookUrl) && cropBytes != null)
+                    {
+                        Log("  Sending Discord alert...");
+                        bool discordOk = await DiscordClient.PostAlertAsync(
+                            webhookUrl:     App.Config.DiscordWebhookUrl,
+                            cameraName:     cameraName,
+                            timestamp:      eventTime,
+                            targetSpecies:  App.Config.TargetSpecies,
+                            snetGuess:      snetGuess,
+                            snetConfidence: snetConf,
+                            bioclipScore:   bioclipScore,
+                            cropImageBytes: cropBytes,
+                            cropFileName:   cropFile ?? "crop.jpg");
+
+                        Log(discordOk
+                            ? "  Discord alert sent successfully!"
+                            : "  WARNING: Discord post failed — check webhook URL and connectivity.");
+                    }
                 }
                 else
                 {
-                    bool animalDetected = false;
-                    float highestConfidence = 0;
-                    float[] bestBbox = null;
+                    Log($"  Target species not matched. BioCLIP top: {bcTopSpecies} ({bcTopScore:P1})");
+                }
 
-                    if (mdResult.detections != null)
+                // ── Save crop even for non-targets if configured ───────────
+                if (!targetMatch && App.Config.SaveAllCrops && !string.IsNullOrEmpty(clsResult.crop_b64))
+                {
+                    try
                     {
-                        foreach (var det in mdResult.detections)
-                        {
-                            // In typical YOLOv5 0-indexed, Class 0 is Animal (for MegaDetector)
-                            if (det.class_id == 0 && det.confidence > 0.6f)
-                            {
-                                animalDetected = true;
-                                if (det.confidence > highestConfidence)
-                                {
-                                    highestConfidence = det.confidence;
-                                    bestBbox = det.bbox;
-                                }
-                            }
-                        }
+                        var bytes    = Convert.FromBase64String(clsResult.crop_b64);
+                        var cropPath = Path.Combine(SnapshotFolder, $"crop_{Path.GetFileName(fullPath)}");
+                        Directory.CreateDirectory(SnapshotFolder);
+                        File.WriteAllBytes(cropPath, bytes);
                     }
-
-                    if (animalDetected)
-                    {
-                        logLine = $"  ★★★ ANIMAL DETECTED! (Confidence: {highestConfidence:P1}) ★★★";
-                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                        
-                        logLine = "  ↳ Running SpeciesNet & BioCLIP classification...";
-                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-
-                        // Serialize: only one SpeciesNet process at a time to avoid
-                        // model-cache file conflicts that cause cryptic pygments errors.
-                        _classifierSemaphore.Wait();
-                        ClassificationResponse clsResult;
-                        string clsRaw = "";
-                        try
-                        {
-                            var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
-                            classifyTask.Wait();
-                            (clsResult, clsRaw) = classifyTask.Result;
-                        }
-                        finally
-                        {
-                            _classifierSemaphore.Release();
-                        }
-
-                        // Log the raw Python output for Classifier
-                        Dispatcher.BeginInvoke(new Action(() => AddLog("  [Classifier Output]:\n" + FormatPythonLog(clsRaw))));
-
-                        if (clsResult.error != null)
-                        {
-                            logLine = $"  ↳ Classifier ERROR: {clsResult.error}";
-                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                        }
-                        else
-                        {
-                            string snetGuess = clsResult.speciesnet?.top_species ?? "Unknown";
-                            logLine = $"  ↳ SpeciesNet guess: {snetGuess} ({clsResult.speciesnet?.confidence ?? 0:P1})";
-                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-
-                            if (clsResult.bioclip?.target_match == true)
-                            {
-                                logLine = $"  🎯 TARGET SPECIES DETECTED! Score: {clsResult.bioclip.target_score:P1}";
-                                if (clsResult.discord_sent)
-                                    logLine += " [Discord Alert Sent]";
-                                
-                                // Update counter on UI thread
-                                Dispatcher.BeginInvoke(new Action(() => IncrementTargetCount()));
-                            }
-                            else
-                            {
-                                logLine = $"  ↳ Target species not matched. Top BioCLIP guess: {clsResult.bioclip?.top_species} ({clsResult.bioclip?.top_score ?? 0:P1})";
-                            }
-                            
-                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                            Dispatcher.BeginInvoke(new Action(() => IncrementAnimalCount()));
-                        }
-                    }
-                    else
-                    {
-                        logLine = $"  ↳ No animal detected (False positive / empty frame).";
-                        Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
-                    }
+                    catch { /* best-effort — don't surface crop-save failures into the main log */ }
                 }
             }
             catch (AggregateException aggEx)
             {
                 var inner = aggEx.InnerException ?? aggEx;
-                logLine = $"  ↳ Processing ERROR: {inner.Message}";
-                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                Log($"  Processing ERROR: {inner.Message}");
             }
             catch (Exception ex)
             {
-                logLine = $"  ↳ Processing ERROR: {ex.Message}";
-                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                Log($"  Processing ERROR: {ex.Message}");
             }
         }
 
         // -----------------------------------------------------------------------
-        // Helpers
+        // Manual test buttons
         // -----------------------------------------------------------------------
-
-        private int _animalCount = 0;
-        private int _targetCount = 0;
-
-        private void IncrementAnimalCount()
-        {
-            _animalCount++;
-            AnimalCountText.Text = $"Animals detected: {_animalCount}";
-        }
-
-        private void IncrementTargetCount()
-        {
-            _targetCount++;
-            TargetCountText.Text = $"Targets matched: {_targetCount}";
-        }
-
-        private void AddLog(string message)
-        {
-            _log.Add(message);
-            if (LogList.Items.Count > 0)
-                LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
-        }
-
-        private static string FormatPythonLog(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return "    (no output)";
-            var lines = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var result = new System.Text.StringBuilder();
-            foreach (var line in lines)
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("{") || trimmed.StartsWith("[")) continue; // skip the json line
-                result.AppendLine("    " + trimmed);
-            }
-            if (result.Length == 0) return "    (no non-JSON output)";
-            return result.ToString().TrimEnd();
-        }
-
-        private static string SanitizeFileName(string name)
-        {
-            foreach (var c in Path.GetInvalidFileNameChars())
-                name = name.Replace(c, '_');
-            return name;
-        }
-
-        private void AutoPollCheckbox_CheckedChanged(object sender, RoutedEventArgs e)
-        {
-            if (AutoPollCheckbox.IsChecked == true)
-            {
-                _pollTimer.Start();
-                AddLog("Auto-polling started (10s interval).");
-            }
-            else
-            {
-                _pollTimer.Stop();
-                AddLog("Auto-polling stopped.");
-            }
-        }
 
         private void TestLocalImageBtn_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new Microsoft.Win32.OpenFileDialog();
-            dlg.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp|All Files|*.*";
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp|All Files|*.*",
+            };
             if (dlg.ShowDialog() == true)
             {
-                var fullPath = dlg.FileName;
-                AddLog($"Manual test triggered for local image: {fullPath}");
-                Task.Run(() => ProcessImageFile(fullPath));
+                AddLog($"Manual test: {dlg.FileName}");
+                _ = Task.Run(async () =>
+                    await ProcessImageAsync(dlg.FileName, "Manual Test", DateTime.UtcNow));
             }
         }
 
@@ -409,6 +379,24 @@ namespace SpeciesDetector
             TriggerSnapshotsOnAllCameras();
         }
 
+        private void AutoPollCheckbox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            if (AutoPollCheckbox.IsChecked == true)
+            {
+                _pollTimer.Start();
+                AddLog("Auto-polling started (10 s interval).");
+            }
+            else
+            {
+                _pollTimer.Stop();
+                AddLog("Auto-polling stopped.");
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Camera enumeration helpers
+        // -----------------------------------------------------------------------
+
         private void TriggerSnapshotsOnAllCameras()
         {
             var cameras = GetAllCameras();
@@ -417,12 +405,11 @@ namespace SpeciesDetector
                 AddLog("No cameras found in configuration.");
                 return;
             }
-
             foreach (var cam in cameras)
             {
-                var guid = cam.FQID.ObjectId;
+                var guid      = cam.FQID.ObjectId;
                 var timestamp = DateTime.UtcNow;
-                Task.Run(() => GrabSnapshot(guid, timestamp));
+                _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
         }
 
@@ -431,15 +418,16 @@ namespace SpeciesDetector
             var cameras = new List<Item>();
             try
             {
-                var children = parentItem == null ? Configuration.Instance.GetItems() : parentItem.GetChildren();
+                var children = parentItem == null
+                    ? Configuration.Instance.GetItems()
+                    : parentItem.GetChildren();
+
                 if (children != null)
                 {
                     foreach (var child in children)
                     {
                         if (child.FQID.Kind == Kind.Camera)
-                        {
                             cameras.Add(child);
-                        }
                         cameras.AddRange(GetAllCameras(child));
                     }
                 }
@@ -449,6 +437,60 @@ namespace SpeciesDetector
                 System.Diagnostics.Debug.WriteLine($"GetAllCameras error: {ex.Message}");
             }
             return cameras;
+        }
+
+        // -----------------------------------------------------------------------
+        // UI helpers (all callable from any thread)
+        // -----------------------------------------------------------------------
+
+        /// <summary>Thread-safe log append + auto-scroll.</summary>
+        private void Log(string message) =>
+            Dispatcher.BeginInvoke(new Action(() => AddLog(message)));
+
+        private void AddLog(string message)
+        {
+            _log.Add(message);
+            if (LogList.Items.Count > 0)
+                LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
+        }
+
+        private void IncrementAnimalCount()
+        {
+            _animalCount++;
+            AnimalCountText.Text = $"Animals: {_animalCount}";
+        }
+
+        private void IncrementTargetCount()
+        {
+            _targetCount++;
+            TargetCountText.Text = $"Targets: {_targetCount}";
+        }
+
+        // -----------------------------------------------------------------------
+        // Static helpers
+        // -----------------------------------------------------------------------
+
+        private static Guid? ExtractCameraGuid(string source)
+        {
+            if (string.IsNullOrEmpty(source))
+                return null;
+
+            const string prefix = "cameras/";
+            if (!source.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var after  = source.Substring(prefix.Length);
+            var slash  = after.IndexOf('/');
+            var guidStr = slash >= 0 ? after.Substring(0, slash) : after;
+
+            return Guid.TryParse(guidStr, out var g) ? g : (Guid?)null;
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            foreach (var c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            return name;
         }
     }
 }

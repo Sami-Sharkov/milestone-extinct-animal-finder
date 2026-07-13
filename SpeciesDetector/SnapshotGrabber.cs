@@ -30,25 +30,15 @@ namespace SpeciesDetector
                 throw new ArgumentNullException(nameof(cameraItem));
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-            
-            // --- TEST OVERRIDE ---
-            // Use the test image instead of pulling from the actual camera
-            string testImagePath = @"c:\Users\Sami\Documents\milestones\extinct an finder\milestone-extinct-animal-finder\SpeciesDetector\test_image1.png";
-            if (File.Exists(testImagePath))
-            {
-                File.Copy(testImagePath, outputPath, true);
-                return true;
-            }
-            // ---------------------
 
             var gotFrame   = new ManualResetEventSlim(false);
             var jpegSource = new JPEGLiveSource(cameraItem);
             bool saved     = false;
 
             // Full native resolution: Width=0 / Height=0 means "don't rescale"
-            jpegSource.Width          = 0;
-            jpegSource.Height         = 0;
-            jpegSource.LiveModeStart  = true;
+            jpegSource.Width         = 0;
+            jpegSource.Height        = 0;
+            jpegSource.LiveModeStart = true;
 
             EventHandler handler = null;
             handler = (sender, e) =>
@@ -73,7 +63,8 @@ namespace SpeciesDetector
                 }
                 else if (args?.Exception != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"SnapshotGrabber LiveContent error: {args.Exception.Message}");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"SnapshotGrabber LiveContent error: {args.Exception.Message}");
                     gotFrame.Set();
                 }
             };

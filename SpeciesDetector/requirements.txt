@@ -1,0 +1,21 @@
+# ── Core ML ────────────────────────────────────────────────────────────────────
+# MegaDetector is loaded via torch.hub (ultralytics/yolov5)
+torch>=2.0.0
+torchvision
+
+# Wildlife classifier (Google/Snapshot Serengeti trained)
+speciesnet
+
+# CLIP-based species classifier
+bioclip
+
+# ── Image processing ────────────────────────────────────────────────────────────
+Pillow>=9.0.0
+
+# ── HTTP (used by bioclip/speciesnet internally; no longer used for Discord) ────
+requests
+
+# ── Detection server (FastAPI + uvicorn) ───────────────────────────────────────
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6

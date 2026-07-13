@@ -1,100 +1,77 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace SpeciesDetector
 {
     public class DetectionResult
     {
-        public int class_id { get; set; }
-        public string name { get; set; }
-        public float confidence { get; set; }
-        public float[] bbox { get; set; }
+        public int     class_id   { get; set; }
+        public string  name       { get; set; }
+        public float   confidence { get; set; }
+        public float[] bbox       { get; set; }
     }
 
     public class MegaDetectorResponse
     {
-        public string status { get; set; }
-        public string error { get; set; }
+        public string            status     { get; set; }
+        public string            error      { get; set; }
         public DetectionResult[] detections { get; set; }
     }
 
+    /// <summary>
+    /// Calls the persistent detection server's /detect endpoint via HTTP.
+    /// No subprocess is started per call — the model stays warm in the server process.
+    /// </summary>
     public static class MegaDetectorClient
     {
-        // Assume the venv is created in the project root folder.
-        // We resolve paths relative to AppDomain.CurrentDomain.BaseDirectory (which is usually bin/Debug/net4.7.2/)
-        private static readonly string PythonExePath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\venv\Scripts\python.exe"));
-        private static readonly string ScriptPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\megadetector_sidecar.py"));
+        private const string DetectUrl  = "http://127.0.0.1:5050/detect";
+        private const int    MaxRetries = 3;
 
-        public static async Task<(MegaDetectorResponse result, string rawOutput)> AnalyzeImageAsync(string imagePath)
+        // Shared client — created once, safe to reuse across threads.
+        private static readonly HttpClient _http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(60),
+        };
+
+        /// <summary>
+        /// Uploads the image to the local detection server and returns MegaDetector results.
+        /// </summary>
+        public static async Task<MegaDetectorResponse> AnalyzeImageAsync(string imagePath)
         {
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Image not found", imagePath);
 
-            // Write output to a temp file instead of using stdio pipes.
-            // Pipe-based redirection (UseShellExecute=false) causes Windows to inherit all
-            // open parent handles into the child process. The MIP SDK opens many handles,
-            // which can exhaust system resources and make Process.Start throw
-            // "Not enough system resources to perform this operation".
-            var outFile = Path.GetTempFileName();
-            try
+            byte[] imageBytes = File.ReadAllBytes(imagePath);
+
+            for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
-                // Wrap the script call in a small cmd snippet that redirects stdout to the
-                // temp file, keeping stderr on the console (or discarded with CreateNoWindow).
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" > \"{outFile}\" 2>&1\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,   //
-                    RedirectStandardError = true
-                };
-
-                using (var process = Process.Start(startInfo))
-                {
-                    if (process == null)
-                        throw new InvalidOperationException("Failed to start python process");
-
-                    await Task.Run(() => process.WaitForExit());
-                    System.Diagnostics.Debug.WriteLine($"[MegaDetector] Process exited with code {process.ExitCode}");
-                }
-
-                var stdout = File.ReadAllText(outFile);
-                System.Diagnostics.Debug.WriteLine($"[MegaDetector Stdout]: {stdout}");
-
-                // YOLOv5 writes banner lines ("Fusing layers...", "Model summary:", etc.)
-                // directly to the OS-level fd1, bypassing our sys.stdout redirect.
-                // Those lines end up in the temp file before the JSON.
-                // The JSON is always the final print(), so grab the last non-empty line.
-                string jsonLine = null;
-                foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
-                        jsonLine = trimmed;
-                }
-
-                if (jsonLine == null)
-                    throw new InvalidOperationException($"Failed to parse MegaDetector output — no JSON line found. Raw output: '{stdout}'");
-
                 try
                 {
+                    using var content      = new MultipartFormDataContent();
+                    using var imageContent = new ByteArrayContent(imageBytes);
+                    imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                    content.Add(imageContent, "image", Path.GetFileName(imagePath));
+
+                    var response = await _http.PostAsync(DetectUrl, content).ConfigureAwait(false);
+                    var body     = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var response = JsonSerializer.Deserialize<MegaDetectorResponse>(jsonLine, options);
-                    return (response, stdout);
+                    return JsonSerializer.Deserialize<MegaDetectorResponse>(body, options);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (attempt < MaxRetries)
                 {
-                    throw new InvalidOperationException($"Failed to parse MegaDetector output: '{jsonLine}' (raw: '{stdout}')", ex);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[MegaDetector] Attempt {attempt} failed: {ex.Message}. Retrying in 1 s...");
+                    await Task.Delay(1_000).ConfigureAwait(false);
                 }
             }
-            finally
-            {
-                try { File.Delete(outFile); } catch { /* best-effort cleanup */ }
-            }
+
+            throw new InvalidOperationException(
+                "MegaDetector server failed to respond after all retries. Is detection_server.py running?");
         }
     }
 }

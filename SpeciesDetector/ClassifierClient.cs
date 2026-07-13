@@ -1,109 +1,103 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace SpeciesDetector
 {
     public class SpeciesNetResult
     {
         public string top_species { get; set; }
-        public float confidence { get; set; }
+        public float  confidence  { get; set; }
     }
 
     public class BioClipResult
     {
-        public bool target_match { get; set; }
-        public float target_score { get; set; }
-        public string top_species { get; set; }
-        public float top_score { get; set; }
+        public bool   target_match  { get; set; }
+        public float  target_score  { get; set; }
+        public string top_species   { get; set; }
+        public float  top_score     { get; set; }
     }
 
     public class ClassificationResponse
     {
-        public string status { get; set; }
-        public string error { get; set; }
-        public string crop_path { get; set; }
+        public string           status    { get; set; }
+        public string           error     { get; set; }
+        /// <summary>Base64-encoded JPEG of the cropped animal region.</summary>
+        public string           crop_b64  { get; set; }
         public SpeciesNetResult speciesnet { get; set; }
-        public BioClipResult bioclip { get; set; }
-        public bool discord_sent { get; set; }
+        public BioClipResult    bioclip   { get; set; }
     }
 
+    /// <summary>
+    /// Calls the persistent detection server's /classify endpoint via HTTP.
+    /// Crops, runs SpeciesNet + BioCLIP, and returns results + the crop as base64.
+    /// Discord posting is handled separately in <see cref="DiscordClient"/>.
+    /// </summary>
     public static class ClassifierClient
     {
-        private static readonly string PythonExePath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\venv\Scripts\python.exe"));
-        private static readonly string ScriptPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\classifier_sidecar.py"));
-        private static readonly string ConfigPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\config.json"));
+        private const string ClassifyUrl = "http://127.0.0.1:5050/classify";
+        private const int    MaxRetries  = 3;
 
-        public static async Task<(ClassificationResponse result, string rawOutput)> ClassifyAnimalAsync(string imagePath, float[] bbox)
+        private static readonly HttpClient _http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(120),
+        };
+
+        /// <summary>
+        /// Uploads the image to the local server, crops to <paramref name="bbox"/>,
+        /// and returns SpeciesNet + BioCLIP results along with a base64 crop.
+        /// </summary>
+        public static async Task<ClassificationResponse> ClassifyAnimalAsync(
+            string    imagePath,
+            float[]   bbox,
+            AppConfig config)
         {
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Image not found", imagePath);
-                
             if (bbox == null || bbox.Length != 4)
-                throw new ArgumentException("bbox must have exactly 4 elements (xmin, ymin, xmax, ymax)");
+                throw new ArgumentException("bbox must have exactly 4 elements [xmin, ymin, xmax, ymax]");
 
-            // Invariant culture handles decimal parsing smoothly (e.g. 0.5 vs 0,5)
-            var xmin = bbox[0].ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var ymin = bbox[1].ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var xmax = bbox[2].ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var ymax = bbox[3].ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var inv            = System.Globalization.CultureInfo.InvariantCulture;
+            var candidatesJson = JsonSerializer.Serialize(config.CandidateSpecies);
+            var imageBytes     = File.ReadAllBytes(imagePath);
 
-            // Write output to a temp file instead of using stdio pipes.
-            // Pipe-based redirection (UseShellExecute=false) causes Windows to inherit all
-            // open parent handles into the child process. The MIP SDK opens many handles,
-            // which can exhaust system resources and make Process.Start throw
-            // "Not enough system resources to perform this operation".
-            var outFile = Path.GetTempFileName();
-            try
+            for (int attempt = 1; attempt <= MaxRetries; attempt++)
             {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c \"\"{PythonExePath}\" \"{ScriptPath}\" \"{imagePath}\" \"{ConfigPath}\" {xmin} {ymin} {xmax} {ymax} > \"{outFile}\" 2>&1\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using (var process = Process.Start(startInfo))
-                {
-                    if (process == null)
-                        throw new InvalidOperationException("Failed to start python process");
-
-                    await Task.Run(() => process.WaitForExit());
-                    System.Diagnostics.Debug.WriteLine($"[Classifier] Process exited with code {process.ExitCode}");
-                }
-
-                var stdout = File.ReadAllText(outFile);
-                System.Diagnostics.Debug.WriteLine($"[Classifier Stdout]: {stdout}");
-
-                string jsonLine = null;
-                foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
-                        jsonLine = trimmed;
-                }
-
-                if (jsonLine == null)
-                    throw new InvalidOperationException($"Failed to parse Classifier output — no JSON line found. Raw output: '{stdout}'");
-
                 try
                 {
+                    using var content      = new MultipartFormDataContent();
+                    using var imageContent = new ByteArrayContent(imageBytes);
+                    imageContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                    content.Add(imageContent,                                    "image",                Path.GetFileName(imagePath));
+                    content.Add(new StringContent(bbox[0].ToString(inv)),        "xmin");
+                    content.Add(new StringContent(bbox[1].ToString(inv)),        "ymin");
+                    content.Add(new StringContent(bbox[2].ToString(inv)),        "xmax");
+                    content.Add(new StringContent(bbox[3].ToString(inv)),        "ymax");
+                    content.Add(new StringContent(config.TargetSpecies),         "target_species");
+                    content.Add(new StringContent(candidatesJson),               "candidate_species");
+                    content.Add(new StringContent(config.CountryCode ?? ""),     "country_code");
+                    content.Add(new StringContent(
+                        config.ConfidenceThreshold.ToString(inv)),               "confidence_threshold");
+
+                    var response = await _http.PostAsync(ClassifyUrl, content).ConfigureAwait(false);
+                    var body     = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var response = JsonSerializer.Deserialize<ClassificationResponse>(jsonLine, options);
-                    return (response, stdout);
+                    return JsonSerializer.Deserialize<ClassificationResponse>(body, options);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (attempt < MaxRetries)
                 {
-                    throw new InvalidOperationException($"Failed to parse Classifier output: '{jsonLine}' (raw: '{stdout}')", ex);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Classifier] Attempt {attempt} failed: {ex.Message}. Retrying in 1 s...");
+                    await Task.Delay(1_000).ConfigureAwait(false);
                 }
             }
-            finally
-            {
-                try { File.Delete(outFile); } catch { /* best-effort cleanup */ }
-            }
+
+            throw new InvalidOperationException(
+                "Classifier server failed to respond after all retries. Is detection_server.py running?");
         }
     }
 }
