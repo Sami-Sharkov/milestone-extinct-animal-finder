@@ -14,6 +14,8 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="🦎 Species Detector" FontSize="20" FontWeight="Bold"
                        Foreground="#CBA6F7" Margin="0,0,0,4"/>
+            <TextBlock Text="Target: Rhodonessa caryophyllacea (Pink-headed Duck)" FontSize="12"
+                       Foreground="#F9E2AF" Margin="0,0,0,4" FontStyle="Italic"/>
             <TextBlock x:Name="StatusText" Text="Connecting..." FontSize="13"
                        Foreground="#A6E3A1"/>
         </StackPanel>
@@ -26,8 +28,10 @@
                  ScrollViewer.VerticalScrollBarVisibility="Auto"/>
 
         <!-- Footer -->
-        <TextBlock Grid.Row="2" x:Name="CountText"
-                   Text="Events received: 0" FontSize="11"
-                   Foreground="#6C7086" Margin="0,6,0,0"/>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+            <TextBlock x:Name="CountText" Text="Events received: 0" FontSize="11" Foreground="#6C7086" Margin="0,0,15,0"/>
+            <TextBlock x:Name="AnimalCountText" Text="Animals detected: 0" FontSize="11" Foreground="#89B4FA" Margin="0,0,15,0"/>
+            <TextBlock x:Name="TargetCountText" Text="Targets matched: 0" FontSize="11" Foreground="#F38BA8" FontWeight="Bold"/>
+        </StackPanel>
     </Grid>
 </Window>

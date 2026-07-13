@@ -187,6 +187,7 @@ namespace SpeciesDetector
                     {
                         bool animalDetected = false;
                         float highestConfidence = 0;
+                        float[] bestBbox = null;
 
                         if (mdResult.detections != null)
                         {
@@ -197,7 +198,10 @@ namespace SpeciesDetector
                                 {
                                     animalDetected = true;
                                     if (det.confidence > highestConfidence)
+                                    {
                                         highestConfidence = det.confidence;
+                                        bestBbox = det.bbox;
+                                    }
                                 }
                             }
                         }
@@ -205,6 +209,41 @@ namespace SpeciesDetector
                         if (animalDetected)
                         {
                             logLine = $"  ★★★ ANIMAL DETECTED! (Confidence: {highestConfidence:P1}) ★★★";
+                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+                            
+                            logLine = "  ↳ Running SpeciesNet & BioCLIP classification...";
+                            Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+
+                            var classifyTask = ClassifierClient.ClassifyAnimalAsync(fullPath, bestBbox);
+                            classifyTask.Wait();
+                            var clsResult = classifyTask.Result;
+
+                            if (clsResult.error != null)
+                            {
+                                logLine = $"  ↳ Classifier ERROR: {clsResult.error}";
+                            }
+                            else
+                            {
+                                string snetGuess = clsResult.speciesnet?.top_species ?? "Unknown";
+                                logLine = $"  ↳ SpeciesNet guess: {snetGuess} ({clsResult.speciesnet?.confidence ?? 0:P1})";
+                                Dispatcher.BeginInvoke(new Action(() => AddLog(logLine)));
+
+                                if (clsResult.bioclip?.target_match == true)
+                                {
+                                    logLine = $"  🎯 TARGET SPECIES DETECTED! Score: {clsResult.bioclip.target_score:P1}";
+                                    if (clsResult.discord_sent)
+                                        logLine += " [Discord Alert Sent]";
+                                    
+                                    // Update counter on UI thread
+                                    Dispatcher.BeginInvoke(new Action(() => IncrementTargetCount()));
+                                }
+                                else
+                                {
+                                    logLine = $"  ↳ Target species not matched. Top BioCLIP guess: {clsResult.bioclip?.top_species} ({clsResult.bioclip?.top_score ?? 0:P1})";
+                                }
+                                
+                                Dispatcher.BeginInvoke(new Action(() => IncrementAnimalCount()));
+                            }
                         }
                         else
                         {
@@ -229,6 +268,21 @@ namespace SpeciesDetector
         // -----------------------------------------------------------------------
         // Helpers
         // -----------------------------------------------------------------------
+
+        private int _animalCount = 0;
+        private int _targetCount = 0;
+
+        private void IncrementAnimalCount()
+        {
+            _animalCount++;
+            AnimalCountText.Text = $"Animals detected: {_animalCount}";
+        }
+
+        private void IncrementTargetCount()
+        {
+            _targetCount++;
+            TargetCountText.Text = $"Targets matched: {_targetCount}";
+        }
 
         private void AddLog(string message)
         {

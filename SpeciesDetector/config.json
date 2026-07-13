@@ -1,0 +1,18 @@
+{
+  "target_species": "Rhodonessa caryophyllacea",
+  "candidate_species": [
+    "Rhodonessa caryophyllacea",
+    "Anas platyrhynchos",
+    "Aythya nyroca",
+    "Tadorna ferruginea",
+    "Vulpes vulpes",
+    "Canis lupus",
+    "Felis catus",
+    "Silver-backed Chevrotain",
+    "Ursus arctos"
+  ],
+  "country_code": "BGR",
+  "confidence_threshold": 0.5,
+  "discord_webhook_url": "",
+  "save_all_crops": true
+}
