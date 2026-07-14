@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using VideoOS.Platform;
@@ -62,7 +63,8 @@ namespace SpeciesDetector
         public MainWindow()
         {
             InitializeComponent();
-            LogList.ItemsSource = _log;
+            LogList.ItemsSource              = _log;
+            DetectionHistoryList.ItemsSource = _detectionHistory;
 
             // Show the actual target species from config
             TargetSpeciesText.Text = $"Target: {App.Config.TargetSpecies}";
@@ -86,6 +88,7 @@ namespace SpeciesDetector
             // ── Step 1: start / verify the Python detection server ───────────
             StatusText.Text       = "Starting detection server...";
             ServerStatusText.Text = "Detection server: starting...";
+            ServerStatusDot.Fill  = new SolidColorBrush(Color.FromRgb(0xF9, 0xE2, 0xAF)); // amber
             AddLog("Checking detection server — this may take ~2 min on first run (loading + warming up models)...");
 
             bool serverReady = await DetectionServerManager.EnsureRunningAsync(msg =>
@@ -96,6 +99,7 @@ namespace SpeciesDetector
                 AddLog("ERROR: Detection server did not start. Check that the venv exists and requirements.txt is installed.");
                 AddLog("You can also start the server manually: run start_server.bat, then restart this app.");
                 ServerStatusText.Text = "Detection server: OFFLINE";
+                ServerStatusDot.Fill  = new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8)); // red
                 StatusText.Text       = "Detection server failed — see log.";
                 AddLog("WARNING: You can still use 'Test Local Image' to process images if the server is already running.");
                 // Don't return — let the user still test local images manually
@@ -103,6 +107,7 @@ namespace SpeciesDetector
             else
             {
                 ServerStatusText.Text = "Detection server: ready";
+                ServerStatusDot.Fill  = new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1)); // green
                 AddLog("Detection server is ready.");
             }
 
@@ -434,7 +439,8 @@ namespace SpeciesDetector
                           $"Camera: {cameraName}\n{eventTime:yyyy-MM-dd HH:mm:ss}";
 
                     var cropBytesForUi = cropBytes; // capture for the closure
-                    Dispatcher.BeginInvoke(new Action(() => UpdateLatestDetection(cropBytesForUi, summary)));
+                    var isMatchForUi   = targetMatch;
+                    Dispatcher.BeginInvoke(new Action(() => AddDetectionRecord(cropBytesForUi, summary, isMatchForUi)));
                 }
 
                 if (targetMatch)
@@ -709,13 +715,18 @@ namespace SpeciesDetector
             TargetCountText.Text = $"Targets: {_targetCount}";
         }
 
+        // Capped so a long unattended run doesn't grow memory unbounded — older
+        // entries are still on disk in snapshots/ regardless.
+        private const int MaxDetectionHistory = 40;
+        private readonly ObservableCollection<DetectionRecord> _detectionHistory = new ObservableCollection<DetectionRecord>();
+
         /// <summary>
-        /// Shows the crop + a details summary in the "Latest Detection" panel.
+        /// Adds a detection (crop + summary) to the top of the in-app history list.
         /// This is the primary way to see detections when the machine has no
         /// internet access (e.g. connected only to the isolated camera network),
         /// where the Discord webhook can never be reached.
         /// </summary>
-        private void UpdateLatestDetection(byte[] imageBytes, string details)
+        private void AddDetectionRecord(byte[] imageBytes, string summary, bool isMatch)
         {
             try
             {
@@ -728,8 +739,10 @@ namespace SpeciesDetector
                     bmp.EndInit();
                 }
                 bmp.Freeze();
-                LatestDetectionImage.Source = bmp;
-                LatestDetectionText.Text    = details;
+
+                _detectionHistory.Insert(0, new DetectionRecord { Thumbnail = bmp, Summary = summary, IsMatch = isMatch });
+                while (_detectionHistory.Count > MaxDetectionHistory)
+                    _detectionHistory.RemoveAt(_detectionHistory.Count - 1);
             }
             catch (Exception ex)
             {
