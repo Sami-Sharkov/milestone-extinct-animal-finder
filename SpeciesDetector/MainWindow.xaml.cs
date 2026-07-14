@@ -426,6 +426,22 @@ namespace SpeciesDetector
                     }
                 }
 
+                DetectionLogger.Append(SnapshotFolder, new DetectionLogEntry
+                {
+                    Timestamp              = eventTime.ToString("o"),
+                    Camera                 = cameraName,
+                    ImageFile              = Path.GetFileName(fullPath),
+                    CropFile               = cropFile,
+                    MegaDetectorConfidence = highestConfidence,
+                    SpeciesNetGuess        = snetGuess,
+                    SpeciesNetConfidence   = snetConf,
+                    BioClipTopSpecies      = bcTopSpecies,
+                    BioClipTopScore        = bcTopScore,
+                    BioClipTargetScore     = targetScore,
+                    TargetSpecies          = App.Config.TargetSpecies,
+                    TargetMatch            = targetMatch,
+                });
+
                 if (cropBytes != null)
                 {
                     string summary = targetMatch
