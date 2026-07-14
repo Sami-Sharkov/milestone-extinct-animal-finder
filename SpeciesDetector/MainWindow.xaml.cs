@@ -128,6 +128,19 @@ namespace SpeciesDetector
 
             AddLog($"Found motion event type ID: {motionEventTypeId}");
 
+            // ── Refresh the cached item tree — Configuration.Instance snapshots
+            //    it at connect time, so a channel enabled server-side afterwards
+            //    (e.g. mid-setup on a shared test rig) won't show up otherwise ──
+            try
+            {
+                Configuration.Instance.RefreshConfiguration(Kind.Camera);
+                AddLog("Refreshed camera configuration from server.");
+            }
+            catch (Exception ex)
+            {
+                AddLog($"Could not refresh camera configuration: {ex.Message}");
+            }
+
             // ── Resolve which cameras to actually monitor ─────────────────────
             var allCameras    = GetAllCameras();
             var targetCameras = FilterTargetCameras(allCameras);
