@@ -498,37 +498,38 @@ namespace SpeciesDetector
         }
 
         /// <summary>
-        /// Logs a camera plus its sibling items — a multi-channel virtual/software
-        /// camera (e.g. StableFPS_T800) registers each of its video sources as its
-        /// own leaf Camera item; the *parent* item is the actual device, and its
-        /// GetChildren() is what enumerates all of that device's streams/channels.
+        /// Logs a camera plus its sibling channels on the same hardware device.
+        /// A multi-channel device (e.g. StableFPS_T800) registers each video source
+        /// as its own leaf Camera item — the legacy Item tree's GetParent() just
+        /// leads to the recording server, not the device. The device is found via
+        /// the Camera config object's ParentItemPath, and Hardware.CameraFolder.Cameras
+        /// enumerates all of that device's channels.
         /// </summary>
         private void LogCameraWithChildren(Item cam)
         {
             AddLog($"    - {cam.Name}");
 
-            Item parent = null;
-            try { parent = cam.GetParent(); } catch (Exception ex) { AddLog($"        (could not read parent: {ex.Message})"); }
-
-            if (parent == null)
+            try
             {
-                AddLog("        (no parent found — this may be a top-level device)");
-                return;
+                var camCfg   = new VideoOS.Platform.ConfigurationItems.Camera(cam.FQID);
+                var hardware = new VideoOS.Platform.ConfigurationItems.Hardware(camCfg.ServerId, camCfg.ParentItemPath);
+
+                AddLog($"        hardware device: '{hardware.Name}' (Model={hardware.Model}, Address={hardware.Address})");
+
+                var channels = hardware.CameraFolder?.Cameras;
+                if (channels == null || channels.Count == 0)
+                {
+                    AddLog("        (hardware device reports no camera channels)");
+                    return;
+                }
+
+                foreach (var ch in channels)
+                    AddLog($"        · channel: '{ch.Name}' (Channel={ch.Channel}, Enabled={ch.Enabled}, Guid={ch.Guid})");
             }
-
-            AddLog($"        parent: '{parent.Name}' (Kind={parent.FQID?.Kind}, Id={parent.FQID?.ObjectId})");
-
-            List<Item> siblings = null;
-            try { siblings = parent.GetChildren(); } catch (Exception ex) { AddLog($"        (could not read parent's children: {ex.Message})"); }
-
-            if (siblings == null || siblings.Count == 0)
+            catch (Exception ex)
             {
-                AddLog("        (parent has no children)");
-                return;
+                AddLog($"        (could not resolve hardware device: {ex.Message})");
             }
-
-            foreach (var sib in siblings)
-                AddLog($"        · sibling: '{sib.Name}' (Kind={sib.FQID?.Kind}, Id={sib.FQID?.ObjectId})");
         }
 
         /// <summary>Filters cameras by config.json's "target_cameras" name substrings (case-insensitive).</summary>
