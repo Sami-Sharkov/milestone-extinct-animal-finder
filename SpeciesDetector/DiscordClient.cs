@@ -35,8 +35,13 @@ namespace SpeciesDetector
         /// <param name="bioclipTargetScore">BioCLIP confidence [0–1] specifically for <paramref name="targetSpecies"/>.</param>
         /// <param name="cropImageBytes">JPEG bytes of the cropped animal region.</param>
         /// <param name="cropFileName">Filename for the attachment (e.g. "crop_cam1_20260713.jpg").</param>
-        /// <returns>True if Discord returned 200/204.</returns>
-        public static async Task<bool> PostAlertAsync(
+        public struct Result
+        {
+            public bool   Success;
+            public string Error;
+        }
+
+        public static async Task<Result> PostAlertAsync(
             string   webhookUrl,
             string   cameraName,
             DateTime timestamp,
@@ -50,8 +55,10 @@ namespace SpeciesDetector
             byte[]   cropImageBytes,
             string   cropFileName)
         {
-            if (string.IsNullOrEmpty(webhookUrl) || cropImageBytes == null || cropImageBytes.Length == 0)
-                return false;
+            if (string.IsNullOrEmpty(webhookUrl))
+                return new Result { Success = false, Error = "No Discord webhook URL configured." };
+            if (cropImageBytes == null || cropImageBytes.Length == 0)
+                return new Result { Success = false, Error = "No crop image bytes to attach." };
 
             try
             {
@@ -128,15 +135,17 @@ namespace SpeciesDetector
                 if (!success)
                 {
                     var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    System.Diagnostics.Debug.WriteLine($"[Discord] HTTP {(int)response.StatusCode}: {body}");
+                    var error = $"HTTP {(int)response.StatusCode} {response.StatusCode}: {body}";
+                    System.Diagnostics.Debug.WriteLine($"[Discord] {error}");
+                    return new Result { Success = false, Error = error };
                 }
 
-                return success;
+                return new Result { Success = true, Error = null };
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[Discord] PostAlertAsync failed: {ex.Message}");
-                return false;
+                return new Result { Success = false, Error = ex.Message };
             }
         }
 

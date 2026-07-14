@@ -267,6 +267,11 @@ namespace SpeciesDetector
                 {
                     var camCfg = new VideoOS.Platform.ConfigurationItems.Camera(cameraItem.FQID);
                     Log($"  Camera '{cameraItem.Name}': Enabled={camCfg.Enabled}, RecordingEnabled={camCfg.RecordingEnabled}");
+
+                    var motion = camCfg.MotionDetectionFolder?.MotionDetections?.FirstOrDefault();
+                    Log(motion != null
+                        ? $"  Motion detection: Enabled={motion.Enabled}, Threshold={motion.Threshold}, GenerateMotionMetadata={motion.GenerateMotionMetadata}"
+                        : "  Motion detection: no settings found for this camera.");
                 }
                 catch (Exception ex)
                 {
@@ -428,7 +433,7 @@ namespace SpeciesDetector
                 if (shouldNotify && !string.IsNullOrEmpty(App.Config.DiscordWebhookUrl) && cropBytes != null)
                 {
                     Log("  Sending Discord alert...");
-                    bool discordOk = await DiscordClient.PostAlertAsync(
+                    var discordResult = await DiscordClient.PostAlertAsync(
                         webhookUrl:         App.Config.DiscordWebhookUrl,
                         cameraName:         cameraName,
                         timestamp:          eventTime,
@@ -442,9 +447,9 @@ namespace SpeciesDetector
                         cropImageBytes:     cropBytes,
                         cropFileName:       cropFile ?? "crop.jpg");
 
-                    Log(discordOk
+                    Log(discordResult.Success
                         ? "  Discord alert sent successfully!"
-                        : "  WARNING: Discord post failed — check webhook URL and connectivity.");
+                        : $"  WARNING: Discord post failed — {discordResult.Error}");
                 }
             }
             catch (AggregateException aggEx)
