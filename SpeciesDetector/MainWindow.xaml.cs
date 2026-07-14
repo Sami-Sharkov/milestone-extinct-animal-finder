@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using VideoOS.Platform;
 using VideoOS.Platform.EventsAndState;
@@ -420,6 +421,22 @@ namespace SpeciesDetector
                     }
                 }
 
+                if (cropBytes != null)
+                {
+                    string summary = targetMatch
+                        ? $"✅ TARGET MATCH — {App.Config.TargetSpecies}\n" +
+                          $"BioCLIP: {targetScore:P1}\n" +
+                          $"SpeciesNet: {snetGuess} ({snetConf:P1})\n" +
+                          $"Camera: {cameraName}\n{eventTime:yyyy-MM-dd HH:mm:ss}"
+                        : $"No match — top guess: {bcTopSpecies} ({bcTopScore:P1})\n" +
+                          $"Target score: {targetScore:P1}\n" +
+                          $"SpeciesNet: {snetGuess} ({snetConf:P1})\n" +
+                          $"Camera: {cameraName}\n{eventTime:yyyy-MM-dd HH:mm:ss}";
+
+                    var cropBytesForUi = cropBytes; // capture for the closure
+                    Dispatcher.BeginInvoke(new Action(() => UpdateLatestDetection(cropBytesForUi, summary)));
+                }
+
                 if (targetMatch)
                 {
                     Log($"  TARGET SPECIES MATCHED! BioCLIP score: {targetScore:P1}");
@@ -690,6 +707,34 @@ namespace SpeciesDetector
         {
             _targetCount++;
             TargetCountText.Text = $"Targets: {_targetCount}";
+        }
+
+        /// <summary>
+        /// Shows the crop + a details summary in the "Latest Detection" panel.
+        /// This is the primary way to see detections when the machine has no
+        /// internet access (e.g. connected only to the isolated camera network),
+        /// where the Discord webhook can never be reached.
+        /// </summary>
+        private void UpdateLatestDetection(byte[] imageBytes, string details)
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                using (var ms = new MemoryStream(imageBytes))
+                {
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.StreamSource = ms;
+                    bmp.EndInit();
+                }
+                bmp.Freeze();
+                LatestDetectionImage.Source = bmp;
+                LatestDetectionText.Text    = details;
+            }
+            catch (Exception ex)
+            {
+                AddLog($"  WARNING: Could not display detection image: {ex.Message}");
+            }
         }
 
         // -----------------------------------------------------------------------
