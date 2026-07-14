@@ -138,14 +138,14 @@ namespace SpeciesDetector
                 {
                     AddLog("ERROR: target_cameras filter matched no cameras. Available cameras on this server:");
                     foreach (var c in allCameras)
-                        AddLog($"    - {c.Name}");
+                        LogCameraWithChildren(c);
                     StatusText.Text = "No cameras matched target_cameras — check config.json.";
                     return;
                 }
 
                 AddLog($"target_cameras filter matched {targetCameras.Count} camera(s):");
                 foreach (var c in targetCameras)
-                    AddLog($"    - {c.Name}");
+                    LogCameraWithChildren(c);
                 _targetCameraIds = new HashSet<Guid>(targetCameras.Select(c => c.FQID.ObjectId));
             }
             else
@@ -495,6 +495,25 @@ namespace SpeciesDetector
                 var timestamp = DateTime.UtcNow;
                 _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
+        }
+
+        /// <summary>
+        /// Logs a camera plus its child items (name + Kind + ObjectId), one level deep.
+        /// Some devices (e.g. a multi-channel virtual/software camera) expose their
+        /// actual video sources as children of a single Camera item rather than as
+        /// separate top-level cameras — this makes that structure visible in the log.
+        /// </summary>
+        private void LogCameraWithChildren(Item cam)
+        {
+            AddLog($"    - {cam.Name}");
+            List<Item> children = null;
+            try { children = cam.GetChildren(); } catch (Exception ex) { AddLog($"        (could not read children: {ex.Message})"); }
+
+            if (children == null || children.Count == 0)
+                return;
+
+            foreach (var child in children)
+                AddLog($"        · child: '{child.Name}' (Kind={child.FQID?.Kind}, Id={child.FQID?.ObjectId})");
         }
 
         /// <summary>Filters cameras by config.json's "target_cameras" name substrings (case-insensitive).</summary>
