@@ -30,6 +30,15 @@ namespace SpeciesDetector
         public bool SaveAllCrops { get; set; } = true;
 
         /// <summary>
+        /// Which camera stream to grab snapshots from — either a 1-based ordinal
+        /// ("2" = second stream defined on the camera) or a substring to match
+        /// against the stream's display name (e.g. "high"). Empty/null means
+        /// use the camera's default live stream (SDK default behaviour).
+        /// </summary>
+        [JsonPropertyName("camera_stream")]
+        public string CameraStream { get; set; }
+
+        /// <summary>
         /// Loads config.json from the given path.
         /// Returns a default instance if the file is missing or invalid.
         /// </summary>

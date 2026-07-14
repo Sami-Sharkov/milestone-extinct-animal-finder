@@ -23,8 +23,12 @@ namespace SpeciesDetector
         /// Grabs one JPEG frame from <paramref name="cameraItem"/> and saves it
         /// to <paramref name="outputPath"/>.
         /// </summary>
+        /// <param name="streamId">
+        /// Specific stream to pull from (see <see cref="CameraStreamResolver"/>).
+        /// Null uses the camera's default live stream.
+        /// </param>
         /// <returns>True if the file was saved; false on timeout or error.</returns>
-        public static bool GrabAndSave(Item cameraItem, string outputPath)
+        public static bool GrabAndSave(Item cameraItem, string outputPath, Guid? streamId = null)
         {
             if (cameraItem == null)
                 throw new ArgumentNullException(nameof(cameraItem));
@@ -39,6 +43,8 @@ namespace SpeciesDetector
             jpegSource.Width         = 0;
             jpegSource.Height        = 0;
             jpegSource.LiveModeStart = true;
+            if (streamId.HasValue)
+                jpegSource.StreamId = streamId.Value;
 
             EventHandler handler = null;
             handler = (sender, e) =>

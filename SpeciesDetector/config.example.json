@@ -15,5 +15,6 @@
   "country_code": "BGR",
   "confidence_threshold": 0.5,
   "discord_webhook_url": "",
-  "save_all_crops": true
+  "save_all_crops": true,
+  "camera_stream": ""
 }

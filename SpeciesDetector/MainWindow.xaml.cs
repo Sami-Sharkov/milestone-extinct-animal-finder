@@ -1,5 +1,6 @@
 #pragma warning disable CS4014
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -23,6 +24,26 @@ namespace SpeciesDetector
         // Snapshots land here, relative to wherever the exe runs from.
         private static readonly string SnapshotFolder =
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "snapshots");
+
+        // Resolved once per camera (config_json "camera_stream") and reused —
+        // avoids re-querying the config API on every single motion event.
+        private readonly Dictionary<Guid, Guid?> _streamIdCache = new Dictionary<Guid, Guid?>();
+
+        // A lingering animal re-triggers motion many times per minute; without a
+        // per-camera cooldown each one would spawn its own MegaDetector/classify
+        // run and, on a match, its own Discord alert.
+        private static readonly TimeSpan CameraCooldown = TimeSpan.FromSeconds(20);
+        private readonly ConcurrentDictionary<Guid, DateTime> _lastTriggered = new ConcurrentDictionary<Guid, DateTime>();
+
+        private Guid? ResolveStreamId(Item cameraItem)
+        {
+            if (_streamIdCache.TryGetValue(cameraItem.FQID.ObjectId, out var cached))
+                return cached;
+
+            var resolved = CameraStreamResolver.Resolve(cameraItem, App.Config.CameraStream, Log);
+            _streamIdCache[cameraItem.FQID.ObjectId] = resolved;
+            return resolved;
+        }
 
         public MainWindow()
         {
@@ -146,6 +167,17 @@ namespace SpeciesDetector
 
                 var guid      = cameraGuid.Value;
                 var timestamp = evt.Time;
+
+                var now  = DateTime.UtcNow;
+                var last = _lastTriggered.GetOrAdd(guid, DateTime.MinValue);
+                if (now - last < CameraCooldown)
+                {
+                    var remaining = CameraCooldown - (now - last);
+                    AddLog($"  Cooldown active ({remaining.TotalSeconds:F0}s remaining) — skipping.");
+                    continue;
+                }
+                _lastTriggered[guid] = now;
+
                 // Fire and forget on a thread-pool thread (non-blocking for the event thread)
                 _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
@@ -169,8 +201,9 @@ namespace SpeciesDetector
                 var safeName  = SanitizeFileName(cameraItem.Name);
                 var filename  = $"{safeName}_{eventTime:yyyyMMdd_HHmmss_fff}.jpg";
                 var fullPath  = Path.Combine(SnapshotFolder, filename);
+                var streamId  = ResolveStreamId(cameraItem);
 
-                bool saved = await Task.Run(() => SnapshotGrabber.GrabAndSave(cameraItem, fullPath));
+                bool saved = await Task.Run(() => SnapshotGrabber.GrabAndSave(cameraItem, fullPath, streamId));
 
                 if (saved)
                     await ProcessImageAsync(fullPath, cameraItem.Name, eventTime);
