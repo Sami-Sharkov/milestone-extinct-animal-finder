@@ -498,22 +498,37 @@ namespace SpeciesDetector
         }
 
         /// <summary>
-        /// Logs a camera plus its child items (name + Kind + ObjectId), one level deep.
-        /// Some devices (e.g. a multi-channel virtual/software camera) expose their
-        /// actual video sources as children of a single Camera item rather than as
-        /// separate top-level cameras — this makes that structure visible in the log.
+        /// Logs a camera plus its sibling items — a multi-channel virtual/software
+        /// camera (e.g. StableFPS_T800) registers each of its video sources as its
+        /// own leaf Camera item; the *parent* item is the actual device, and its
+        /// GetChildren() is what enumerates all of that device's streams/channels.
         /// </summary>
         private void LogCameraWithChildren(Item cam)
         {
             AddLog($"    - {cam.Name}");
-            List<Item> children = null;
-            try { children = cam.GetChildren(); } catch (Exception ex) { AddLog($"        (could not read children: {ex.Message})"); }
 
-            if (children == null || children.Count == 0)
+            Item parent = null;
+            try { parent = cam.GetParent(); } catch (Exception ex) { AddLog($"        (could not read parent: {ex.Message})"); }
+
+            if (parent == null)
+            {
+                AddLog("        (no parent found — this may be a top-level device)");
                 return;
+            }
 
-            foreach (var child in children)
-                AddLog($"        · child: '{child.Name}' (Kind={child.FQID?.Kind}, Id={child.FQID?.ObjectId})");
+            AddLog($"        parent: '{parent.Name}' (Kind={parent.FQID?.Kind}, Id={parent.FQID?.ObjectId})");
+
+            List<Item> siblings = null;
+            try { siblings = parent.GetChildren(); } catch (Exception ex) { AddLog($"        (could not read parent's children: {ex.Message})"); }
+
+            if (siblings == null || siblings.Count == 0)
+            {
+                AddLog("        (parent has no children)");
+                return;
+            }
+
+            foreach (var sib in siblings)
+                AddLog($"        · sibling: '{sib.Name}' (Kind={sib.FQID?.Kind}, Id={sib.FQID?.ObjectId})");
         }
 
         /// <summary>Filters cameras by config.json's "target_cameras" name substrings (case-insensitive).</summary>
