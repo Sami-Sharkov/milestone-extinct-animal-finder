@@ -235,6 +235,16 @@ namespace SpeciesDetector
                     return;
                 }
 
+                try
+                {
+                    var camCfg = new VideoOS.Platform.ConfigurationItems.Camera(cameraItem.FQID);
+                    Log($"  Camera '{cameraItem.Name}': Enabled={camCfg.Enabled}, RecordingEnabled={camCfg.RecordingEnabled}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"  Could not read camera config state: {ex.Message}");
+                }
+
                 var safeName  = SanitizeFileName(cameraItem.Name);
                 var filename  = $"{safeName}_{eventTime:yyyyMMdd_HHmmss_fff}.jpg";
                 var fullPath  = Path.Combine(SnapshotFolder, filename);
@@ -252,7 +262,7 @@ namespace SpeciesDetector
                 }
                 else
                 {
-                    Log($"  Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s — camera may not be live/connected)");
+                    Log($"  Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 25 s — camera may not be live/connected)");
                 }
             }
             catch (AggregateException aggEx)

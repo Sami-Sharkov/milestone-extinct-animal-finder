@@ -17,7 +17,7 @@ namespace SpeciesDetector
     /// </summary>
     static class SnapshotGrabber
     {
-        private const int TimeoutMs = 10_000; // 10 s — give the recording server time to respond
+        private const int TimeoutMs = 25_000; // 25 s — some sources take a while to establish a live connection
 
         public struct Result
         {
