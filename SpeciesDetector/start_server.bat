@@ -13,7 +13,7 @@
 
 setlocal
 set "SCRIPT_DIR=%~dp0"
-set "VENV_PYTHON=%SCRIPT_DIR%..\..\venv\Scripts\python.exe"
+set "VENV_PYTHON=%SCRIPT_DIR%..\venv\Scripts\python.exe"
 set "SERVER_SCRIPT=%SCRIPT_DIR%detection_server.py"
 
 echo.
@@ -28,7 +28,7 @@ if not exist "%VENV_PYTHON%" (
     echo    %VENV_PYTHON%
     echo.
     echo  Please set up the venv first:
-    echo    cd %SCRIPT_DIR%..\..\
+    echo    cd %SCRIPT_DIR%..\
     echo    python -m venv venv
     echo    venv\Scripts\pip install -r SpeciesDetector\requirements.txt
     echo.

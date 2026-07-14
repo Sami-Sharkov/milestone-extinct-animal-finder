@@ -10,3 +10,4 @@ __pycache__/
 
 # Application specifics
 snapshots/
+SpeciesDetector/config.json
