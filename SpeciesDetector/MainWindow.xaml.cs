@@ -41,6 +41,13 @@ namespace SpeciesDetector
         // (someone else's project, misc test items) don't get processed.
         private HashSet<Guid> _targetCameraIds;
 
+        // The actual resolved Item objects for _targetCameraIds. Some channels
+        // (e.g. a virtual multi-channel device's sub-streams) are only reachable
+        // via a direct GetItem() lookup and never appear in GetAllCameras()'s
+        // enumeration — so manual/poll snapshot triggers must reuse these instead
+        // of re-deriving the list by filtering GetAllCameras() again.
+        private List<Item> _resolvedTargetCameras;
+
         private Guid? ResolveStreamId(Item cameraItem)
         {
             if (_streamIdCache.TryGetValue(cameraItem.FQID.ObjectId, out var cached))
@@ -149,6 +156,12 @@ namespace SpeciesDetector
             {
                 if (targetCameras.Count == 0)
                 {
+                    AddLog("No top-level camera matched — searching hardware device channels...");
+                    targetCameras = FindTargetChannelsViaHardware(allCameras, App.Config.TargetCameras);
+                }
+
+                if (targetCameras.Count == 0)
+                {
                     AddLog("ERROR: target_cameras filter matched no cameras. Available cameras on this server:");
                     foreach (var c in allCameras)
                         LogCameraWithChildren(c);
@@ -160,11 +173,13 @@ namespace SpeciesDetector
                 foreach (var c in targetCameras)
                     LogCameraWithChildren(c);
                 _targetCameraIds = new HashSet<Guid>(targetCameras.Select(c => c.FQID.ObjectId));
+                _resolvedTargetCameras = targetCameras;
             }
             else
             {
                 AddLog($"No target_cameras filter set — monitoring all {allCameras.Count} camera(s) on this server.");
                 _targetCameraIds = null;
+                _resolvedTargetCameras = null;
             }
 
             StatusText.Text = "Subscribing to motion events...";
@@ -493,9 +508,7 @@ namespace SpeciesDetector
 
         private void TriggerSnapshotsOnAllCameras()
         {
-            var cameras = _targetCameraIds != null
-                ? GetAllCameras().Where(c => _targetCameraIds.Contains(c.FQID.ObjectId)).ToList()
-                : GetAllCameras();
+            var cameras = _resolvedTargetCameras ?? GetAllCameras();
 
             if (cameras.Count == 0)
             {
@@ -508,6 +521,66 @@ namespace SpeciesDetector
                 var timestamp = DateTime.UtcNow;
                 _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
+        }
+
+        /// <summary>
+        /// Some channels on a multi-channel device (e.g. StableFPS_T800's individual
+        /// video sources) never appear in GetAllCameras()'s enumeration at all, even
+        /// after a config refresh — only Hardware.CameraFolder.Cameras exposes them.
+        /// For each already-discovered camera, this walks to its parent hardware
+        /// device, checks every channel's name against target_cameras, and fetches
+        /// a matching channel's Item directly by ID (bypassing the broken enumeration).
+        /// </summary>
+        private List<Item> FindTargetChannelsViaHardware(List<Item> topLevelCameras, string[] filters)
+        {
+            var found = new List<Item>();
+            if (filters == null || filters.Length == 0)
+                return found;
+
+            var seenHardwarePaths = new HashSet<string>();
+
+            foreach (var cam in topLevelCameras)
+            {
+                try
+                {
+                    var camCfg = new VideoOS.Platform.ConfigurationItems.Camera(cam.FQID);
+                    var hwPath = camCfg.ParentItemPath ?? string.Empty;
+                    if (!seenHardwarePaths.Add(hwPath))
+                        continue; // already searched this device's channels
+
+                    var hardware = new VideoOS.Platform.ConfigurationItems.Hardware(camCfg.ServerId, hwPath);
+                    var channels = hardware.CameraFolder?.Cameras;
+                    if (channels == null)
+                        continue;
+
+                    foreach (var ch in channels)
+                    {
+                        bool matches = filters.Any(f =>
+                            !string.IsNullOrWhiteSpace(f) &&
+                            ch.Name != null &&
+                            ch.Name.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0);
+                        if (!matches)
+                            continue;
+
+                        var item = Configuration.Instance.GetItem(camCfg.ServerId, ch.Guid, Kind.Camera);
+                        if (item != null)
+                        {
+                            AddLog($"    Found '{ch.Name}' via hardware channel search (direct GetItem lookup).");
+                            found.Add(item);
+                        }
+                        else
+                        {
+                            AddLog($"    WARNING: channel '{ch.Name}' matched target_cameras but GetItem() returned null.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"    (hardware channel search failed for '{cam.Name}': {ex.Message})");
+                }
+            }
+
+            return found;
         }
 
         /// <summary>
