@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -34,6 +35,11 @@ namespace SpeciesDetector
         // run and, on a match, its own Discord alert.
         private static readonly TimeSpan CameraCooldown = TimeSpan.FromSeconds(20);
         private readonly ConcurrentDictionary<Guid, DateTime> _lastTriggered = new ConcurrentDictionary<Guid, DateTime>();
+
+        // Null = unrestricted (monitor every camera on the server). Populated from
+        // config.json's "target_cameras" so a shared test server's other cameras
+        // (someone else's project, misc test items) don't get processed.
+        private HashSet<Guid> _targetCameraIds;
 
         private Guid? ResolveStreamId(Item cameraItem)
         {
@@ -69,7 +75,7 @@ namespace SpeciesDetector
             // ── Step 1: start / verify the Python detection server ───────────
             StatusText.Text       = "Starting detection server...";
             ServerStatusText.Text = "Detection server: starting...";
-            AddLog("Checking detection server — this may take ~60 s on first run (loading models)...");
+            AddLog("Checking detection server — this may take ~2 min on first run (loading + warming up models)...");
 
             bool serverReady = await DetectionServerManager.EnsureRunningAsync(msg =>
                 Dispatcher.BeginInvoke(new Action(() => AddLog(msg))));
@@ -121,14 +127,45 @@ namespace SpeciesDetector
             }
 
             AddLog($"Found motion event type ID: {motionEventTypeId}");
+
+            // ── Resolve which cameras to actually monitor ─────────────────────
+            var allCameras    = GetAllCameras();
+            var targetCameras = FilterTargetCameras(allCameras);
+
+            if (App.Config.TargetCameras != null && App.Config.TargetCameras.Length > 0)
+            {
+                if (targetCameras.Count == 0)
+                {
+                    AddLog("ERROR: target_cameras filter matched no cameras. Available cameras on this server:");
+                    foreach (var c in allCameras)
+                        AddLog($"    - {c.Name}");
+                    StatusText.Text = "No cameras matched target_cameras — check config.json.";
+                    return;
+                }
+
+                AddLog($"target_cameras filter matched {targetCameras.Count} camera(s):");
+                foreach (var c in targetCameras)
+                    AddLog($"    - {c.Name}");
+                _targetCameraIds = new HashSet<Guid>(targetCameras.Select(c => c.FQID.ObjectId));
+            }
+            else
+            {
+                AddLog($"No target_cameras filter set — monitoring all {allCameras.Count} camera(s) on this server.");
+                _targetCameraIds = null;
+            }
+
             StatusText.Text = "Subscribing to motion events...";
 
             try
             {
+                var sourceIds = _targetCameraIds != null
+                    ? new SourceIds(_targetCameraIds)
+                    : SourceIds.Any;
+
                 var rule = new SubscriptionRule(
                     Modifier.Include,
                     ResourceTypes.Any,
-                    SourceIds.Any,
+                    sourceIds,
                     new EventTypes(new[] { motionEventTypeId.Value }));
 
                 await App.DataModel.Session.AddSubscriptionAsync(new[] { rule }, default);
@@ -432,7 +469,10 @@ namespace SpeciesDetector
 
         private void TriggerSnapshotsOnAllCameras()
         {
-            var cameras = GetAllCameras();
+            var cameras = _targetCameraIds != null
+                ? GetAllCameras().Where(c => _targetCameraIds.Contains(c.FQID.ObjectId)).ToList()
+                : GetAllCameras();
+
             if (cameras.Count == 0)
             {
                 AddLog("No cameras found in configuration.");
@@ -444,6 +484,19 @@ namespace SpeciesDetector
                 var timestamp = DateTime.UtcNow;
                 _ = Task.Run(async () => await GrabSnapshotAsync(guid, timestamp));
             }
+        }
+
+        /// <summary>Filters cameras by config.json's "target_cameras" name substrings (case-insensitive).</summary>
+        private static List<Item> FilterTargetCameras(List<Item> allCameras)
+        {
+            var filters = App.Config.TargetCameras;
+            if (filters == null || filters.Length == 0)
+                return allCameras;
+
+            return allCameras.Where(c => filters.Any(f =>
+                !string.IsNullOrWhiteSpace(f) &&
+                c.Name != null &&
+                c.Name.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
         }
 
         private List<Item> GetAllCameras(Item parentItem = null)

@@ -43,6 +43,7 @@ log = logging.getLogger("detector")
 # ── MegaDetector model path ──────────────────────────────────────────────────
 MODEL_URL  = "https://github.com/ecologize/CameraTraps/releases/download/v5.0/md_v5a.0.0.pt"
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "md_v5a.0.0.pt")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 # ── Shared model holders ─────────────────────────────────────────────────────
 _models: dict = {}
@@ -56,6 +57,21 @@ def _download_megadetector():
         log.info("Downloading MegaDetector model to %s — this may take a few minutes…", MODEL_PATH)
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
         log.info("MegaDetector download complete.")
+
+
+def _load_candidate_species():
+    """Reads candidate_species (+ target_species) from the sibling config.json, for BioCLIP warmup."""
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        candidates = list(cfg.get("candidate_species") or [])
+        target = cfg.get("target_species")
+        if target and target not in candidates:
+            candidates.append(target)
+        return candidates or None
+    except Exception as exc:
+        log.warning("Could not read candidate_species from config.json (%s) — BioCLIP will initialise lazily on first request.", exc)
+        return None
 
 
 def _get_bioclip(candidates: tuple):
@@ -97,8 +113,16 @@ async def lifespan(app: FastAPI):
     _models["prepare_instances_dict"] = prepare_instances_dict
     log.info("✓ SpeciesNet ready.")
 
-    # ── BioCLIP (lazy-initialised per candidate set in _get_bioclip) ────────
-    log.info("BioCLIP will be initialised on first classify request.")
+    # ── BioCLIP ────────────────────────────────────────────────────────────
+    # Warm it up now using config.json's candidate list so the first real
+    # /classify request isn't the one paying model-load latency (~30s).
+    candidates = _load_candidate_species()
+    if candidates:
+        log.info("Warming up BioCLIP for %d candidate species from config.json…", len(candidates))
+        _get_bioclip(tuple(candidates))
+        log.info("✓ BioCLIP ready.")
+    else:
+        log.info("BioCLIP will be initialised on first classify request.")
     log.info("=" * 50)
     log.info("All models loaded — server ready to accept requests.")
     log.info("=" * 50)

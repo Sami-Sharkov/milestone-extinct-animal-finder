@@ -6,7 +6,8 @@
 :: OR let the WPF app auto-start it (it does this automatically).
 ::
 :: The server loads MegaDetector + SpeciesNet + BioCLIP on startup.
-:: First run takes ~60 s; subsequent runs are faster (cached models).
+:: First run takes ~2 min (BioCLIP is warmed up eagerly); subsequent runs
+:: are faster once model weights are cached on disk.
 ::
 :: Press Ctrl+C to stop the server.
 :: ============================================================
@@ -20,7 +21,7 @@ echo.
 echo  Not Actually Extinct -- Detection Server
 echo  ==========================================
 echo  Serving on http://127.0.0.1:5050
-echo  First startup loads 3 ML models -- please wait ~60 seconds.
+echo  First startup loads 3 ML models -- please wait ~2 minutes.
 echo.
 
 if not exist "%VENV_PYTHON%" (

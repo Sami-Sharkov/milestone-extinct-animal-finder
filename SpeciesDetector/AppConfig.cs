@@ -39,6 +39,16 @@ namespace SpeciesDetector
         public string CameraStream { get; set; }
 
         /// <summary>
+        /// Case-insensitive substrings matched against camera names — only cameras
+        /// whose name contains one of these are monitored/polled. Empty/null means
+        /// monitor every camera on the server (only sensible on a server dedicated
+        /// to this project — on a shared test server, set this to avoid picking up
+        /// other people's cameras).
+        /// </summary>
+        [JsonPropertyName("target_cameras")]
+        public string[] TargetCameras { get; set; } = Array.Empty<string>();
+
+        /// <summary>
         /// Loads config.json from the given path.
         /// Returns a default instance if the file is missing or invalid.
         /// </summary>

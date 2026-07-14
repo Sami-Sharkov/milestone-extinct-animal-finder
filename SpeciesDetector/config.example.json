@@ -16,5 +16,6 @@
   "confidence_threshold": 0.5,
   "discord_webhook_url": "",
   "save_all_crops": true,
-  "camera_stream": ""
+  "camera_stream": "",
+  "target_cameras": []
 }

@@ -16,7 +16,7 @@ namespace SpeciesDetector
     {
         private const string HealthUrl  = "http://127.0.0.1:5050/health";
         private const int    PollMs     = 2_000;   // poll every 2 seconds
-        private const int    TimeoutSec = 120;     // up to 2 min for model loading
+        private const int    TimeoutSec = 240;     // up to 4 min — BioCLIP is now warmed up eagerly at startup too
 
         // Resolved once, based on the exe's location (…\bin\Debug\net4.7.2\)
         private static readonly string VenvPython = Path.GetFullPath(
@@ -55,7 +55,7 @@ namespace SpeciesDetector
                 return false;
             }
 
-            logCallback("  Starting detection server (loading ML models — may take ~60 s the first time)…");
+            logCallback("  Starting detection server (loading ML models, incl. BioCLIP warmup — may take ~2 min the first time)…");
 
             try
             {
