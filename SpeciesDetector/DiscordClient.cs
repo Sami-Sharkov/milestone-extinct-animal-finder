@@ -15,6 +15,15 @@ namespace SpeciesDetector
     /// </summary>
     public static class DiscordClient
     {
+        static DiscordClient()
+        {
+            // .NET Framework 4.7.2 doesn't always negotiate TLS 1.2 by default
+            // depending on OS/registry settings, and Discord requires it — without
+            // this, every request fails with the unhelpful "An error occurred
+            // while sending the request."
+            System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
+        }
+
         private static readonly HttpClient _http = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(30),
@@ -144,8 +153,13 @@ namespace SpeciesDetector
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[Discord] PostAlertAsync failed: {ex.Message}");
-                return new Result { Success = false, Error = ex.Message };
+                var root = ex;
+                while (root.InnerException != null)
+                    root = root.InnerException;
+                var error = root == ex ? ex.Message : $"{ex.Message} — {root.Message}";
+
+                System.Diagnostics.Debug.WriteLine($"[Discord] PostAlertAsync failed: {error}");
+                return new Result { Success = false, Error = error };
             }
         }
 
