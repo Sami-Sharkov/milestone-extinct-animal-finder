@@ -47,6 +47,10 @@ namespace SpeciesDetector
         [JsonPropertyName("camera_stream")]
         public string CameraStream { get; set; }
 
+        /// <summary>Seconds between Auto Poll snapshot grabs when the checkbox is checked.</summary>
+        [JsonPropertyName("poll_interval_seconds")]
+        public int PollIntervalSeconds { get; set; } = 10;
+
         /// <summary>
         /// Case-insensitive substrings matched against camera names — only cameras
         /// whose name contains one of these are monitored/polled. Empty/null means

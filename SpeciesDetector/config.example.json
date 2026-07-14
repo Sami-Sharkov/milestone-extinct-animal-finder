@@ -18,5 +18,6 @@
   "save_all_crops": true,
   "camera_stream": "",
   "target_cameras": [],
-  "discord_notify_non_target": false
+  "discord_notify_non_target": false,
+  "poll_interval_seconds": 10
 }

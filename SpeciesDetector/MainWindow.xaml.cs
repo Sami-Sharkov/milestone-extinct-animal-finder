@@ -66,8 +66,11 @@ namespace SpeciesDetector
             // Show the actual target species from config
             TargetSpeciesText.Text = $"Target: {App.Config.TargetSpecies}";
 
+            var pollSeconds = Math.Max(1, App.Config.PollIntervalSeconds);
+            AutoPollCheckbox.Content = $"Auto Poll ({pollSeconds} s)";
+
             _pollTimer          = new DispatcherTimer();
-            _pollTimer.Interval = TimeSpan.FromSeconds(10);
+            _pollTimer.Interval = TimeSpan.FromSeconds(pollSeconds);
             _pollTimer.Tick    += PollTimer_Tick;
 
             Loaded += MainWindow_Loaded;
@@ -498,7 +501,7 @@ namespace SpeciesDetector
             if (AutoPollCheckbox.IsChecked == true)
             {
                 _pollTimer.Start();
-                AddLog("Auto-polling started (10 s interval).");
+                AddLog($"Auto-polling started ({_pollTimer.Interval.TotalSeconds:0} s interval).");
             }
             else
             {
