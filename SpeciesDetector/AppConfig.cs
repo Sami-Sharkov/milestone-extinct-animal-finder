@@ -26,6 +26,15 @@ namespace SpeciesDetector
         [JsonPropertyName("discord_webhook_url")]
         public string DiscordWebhookUrl { get; set; }
 
+        /// <summary>
+        /// If true, also posts a Discord alert for animals that were detected and
+        /// classified but did NOT match the target species (useful while tuning
+        /// thresholds / verifying the pipeline). Target matches always notify
+        /// regardless of this setting.
+        /// </summary>
+        [JsonPropertyName("discord_notify_non_target")]
+        public bool NotifyNonTargetMatches { get; set; } = false;
+
         [JsonPropertyName("save_all_crops")]
         public bool SaveAllCrops { get; set; } = true;
 

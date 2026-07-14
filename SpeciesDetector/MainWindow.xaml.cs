@@ -240,12 +240,20 @@ namespace SpeciesDetector
                 var fullPath  = Path.Combine(SnapshotFolder, filename);
                 var streamId  = ResolveStreamId(cameraItem);
 
-                bool saved = await Task.Run(() => SnapshotGrabber.GrabAndSave(cameraItem, fullPath, streamId));
+                var grabResult = await Task.Run(() => SnapshotGrabber.GrabAndSave(cameraItem, fullPath, streamId));
 
-                if (saved)
+                if (grabResult.Success)
+                {
                     await ProcessImageAsync(fullPath, cameraItem.Name, eventTime);
+                }
+                else if (grabResult.Error != null)
+                {
+                    Log($"  Snapshot FAILED for camera '{cameraItem.Name}': {grabResult.Error}");
+                }
                 else
-                    Log($"  Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s)");
+                {
+                    Log($"  Snapshot TIMED OUT for camera '{cameraItem.Name}' (no frame within 10 s — camera may not be live/connected)");
+                }
             }
             catch (AggregateException aggEx)
             {
@@ -340,72 +348,65 @@ namespace SpeciesDetector
                 float  snetConf  = clsResult.speciesnet?.confidence  ?? 0f;
                 Log($"  SpeciesNet: {snetGuess} ({snetConf:P1})");
 
-                bool  targetMatch  = clsResult.bioclip?.target_match  ?? false;
-                float bioclipScore = clsResult.bioclip?.target_score  ?? 0f;
-                string bcTopSpecies = clsResult.bioclip?.top_species ?? "unknown";
-                float  bcTopScore   = clsResult.bioclip?.top_score   ?? 0f;
+                bool   targetMatch  = clsResult.bioclip?.target_match  ?? false;
+                float  targetScore  = clsResult.bioclip?.target_score  ?? 0f;
+                string bcTopSpecies = clsResult.bioclip?.top_species   ?? "unknown";
+                float  bcTopScore   = clsResult.bioclip?.top_score     ?? 0f;
+
+                // ── Save crop to snapshots folder — always for a target match,
+                //    otherwise only if save_all_crops is enabled ─────────────
+                byte[] cropBytes = null;
+                string cropFile  = null;
+                if (!string.IsNullOrEmpty(clsResult.crop_b64) && (targetMatch || App.Config.SaveAllCrops))
+                {
+                    try
+                    {
+                        cropBytes = Convert.FromBase64String(clsResult.crop_b64);
+                        cropFile  = $"crop_{Path.GetFileName(fullPath)}";
+                        var cropPath = Path.Combine(SnapshotFolder, cropFile);
+                        Directory.CreateDirectory(SnapshotFolder);
+                        File.WriteAllBytes(cropPath, cropBytes);
+                        Log($"  Crop saved: {cropPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"  WARNING: Could not decode/save crop: {ex.Message}");
+                    }
+                }
 
                 if (targetMatch)
                 {
-                    Log($"  TARGET SPECIES MATCHED! BioCLIP score: {bioclipScore:P1}");
+                    Log($"  TARGET SPECIES MATCHED! BioCLIP score: {targetScore:P1}");
                     Dispatcher.BeginInvoke(new Action(IncrementTargetCount));
-
-                    // ── Save crop to snapshots folder ─────────────────────────
-                    byte[] cropBytes  = null;
-                    string cropFile   = null;
-                    if (!string.IsNullOrEmpty(clsResult.crop_b64))
-                    {
-                        try
-                        {
-                            cropBytes = Convert.FromBase64String(clsResult.crop_b64);
-                            cropFile  = $"crop_{Path.GetFileName(fullPath)}";
-                            var cropPath = Path.Combine(SnapshotFolder, cropFile);
-                            Directory.CreateDirectory(SnapshotFolder);
-                            File.WriteAllBytes(cropPath, cropBytes);
-                            Log($"  Crop saved: {cropPath}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Log($"  WARNING: Could not decode/save crop: {ex.Message}");
-                        }
-                    }
-
-                    // ── Discord alert ─────────────────────────────────────────
-                    if (!string.IsNullOrEmpty(App.Config.DiscordWebhookUrl) && cropBytes != null)
-                    {
-                        Log("  Sending Discord alert...");
-                        bool discordOk = await DiscordClient.PostAlertAsync(
-                            webhookUrl:     App.Config.DiscordWebhookUrl,
-                            cameraName:     cameraName,
-                            timestamp:      eventTime,
-                            targetSpecies:  App.Config.TargetSpecies,
-                            snetGuess:      snetGuess,
-                            snetConfidence: snetConf,
-                            bioclipScore:   bioclipScore,
-                            cropImageBytes: cropBytes,
-                            cropFileName:   cropFile ?? "crop.jpg");
-
-                        Log(discordOk
-                            ? "  Discord alert sent successfully!"
-                            : "  WARNING: Discord post failed — check webhook URL and connectivity.");
-                    }
                 }
                 else
                 {
                     Log($"  Target species not matched. BioCLIP top: {bcTopSpecies} ({bcTopScore:P1})");
                 }
 
-                // ── Save crop even for non-targets if configured ───────────
-                if (!targetMatch && App.Config.SaveAllCrops && !string.IsNullOrEmpty(clsResult.crop_b64))
+                // ── Discord alert — always for a target match; for non-matches
+                //    only if discord_notify_non_target is enabled ─────────────
+                bool shouldNotify = targetMatch || App.Config.NotifyNonTargetMatches;
+                if (shouldNotify && !string.IsNullOrEmpty(App.Config.DiscordWebhookUrl) && cropBytes != null)
                 {
-                    try
-                    {
-                        var bytes    = Convert.FromBase64String(clsResult.crop_b64);
-                        var cropPath = Path.Combine(SnapshotFolder, $"crop_{Path.GetFileName(fullPath)}");
-                        Directory.CreateDirectory(SnapshotFolder);
-                        File.WriteAllBytes(cropPath, bytes);
-                    }
-                    catch { /* best-effort — don't surface crop-save failures into the main log */ }
+                    Log("  Sending Discord alert...");
+                    bool discordOk = await DiscordClient.PostAlertAsync(
+                        webhookUrl:         App.Config.DiscordWebhookUrl,
+                        cameraName:         cameraName,
+                        timestamp:          eventTime,
+                        targetSpecies:      App.Config.TargetSpecies,
+                        isTargetMatch:      targetMatch,
+                        snetGuess:          snetGuess,
+                        snetConfidence:     snetConf,
+                        bioclipTopSpecies:  bcTopSpecies,
+                        bioclipTopScore:    bcTopScore,
+                        bioclipTargetScore: targetScore,
+                        cropImageBytes:     cropBytes,
+                        cropFileName:       cropFile ?? "crop.jpg");
+
+                    Log(discordOk
+                        ? "  Discord alert sent successfully!"
+                        : "  WARNING: Discord post failed — check webhook URL and connectivity.");
                 }
             }
             catch (AggregateException aggEx)

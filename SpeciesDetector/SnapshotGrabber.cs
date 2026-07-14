@@ -19,6 +19,13 @@ namespace SpeciesDetector
     {
         private const int TimeoutMs = 10_000; // 10 s — give the recording server time to respond
 
+        public struct Result
+        {
+            public bool   Success;
+            /// <summary>SDK-reported error, if the failure wasn't a plain timeout (e.g. access denied, no live source).</summary>
+            public string Error;
+        }
+
         /// <summary>
         /// Grabs one JPEG frame from <paramref name="cameraItem"/> and saves it
         /// to <paramref name="outputPath"/>.
@@ -27,17 +34,17 @@ namespace SpeciesDetector
         /// Specific stream to pull from (see <see cref="CameraStreamResolver"/>).
         /// Null uses the camera's default live stream.
         /// </param>
-        /// <returns>True if the file was saved; false on timeout or error.</returns>
-        public static bool GrabAndSave(Item cameraItem, string outputPath, Guid? streamId = null)
+        public static Result GrabAndSave(Item cameraItem, string outputPath, Guid? streamId = null)
         {
             if (cameraItem == null)
                 throw new ArgumentNullException(nameof(cameraItem));
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
-            var gotFrame   = new ManualResetEventSlim(false);
-            var jpegSource = new JPEGLiveSource(cameraItem);
-            bool saved     = false;
+            var gotFrame     = new ManualResetEventSlim(false);
+            var jpegSource   = new JPEGLiveSource(cameraItem);
+            bool saved       = false;
+            string sdkError  = null;
 
             // Full native resolution: Width=0 / Height=0 means "don't rescale"
             jpegSource.Width         = 0;
@@ -59,6 +66,7 @@ namespace SpeciesDetector
                     }
                     catch (Exception ex)
                     {
+                        sdkError = $"Write error: {ex.Message}";
                         System.Diagnostics.Debug.WriteLine($"SnapshotGrabber write error: {ex.Message}");
                     }
                     finally
@@ -69,6 +77,7 @@ namespace SpeciesDetector
                 }
                 else if (args?.Exception != null)
                 {
+                    sdkError = args.Exception.Message;
                     System.Diagnostics.Debug.WriteLine(
                         $"SnapshotGrabber LiveContent error: {args.Exception.Message}");
                     gotFrame.Set();
@@ -88,7 +97,7 @@ namespace SpeciesDetector
                 gotFrame.Dispose();
             }
 
-            return saved;
+            return new Result { Success = saved, Error = sdkError };
         }
     }
 }
