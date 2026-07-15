@@ -64,9 +64,25 @@ namespace SpeciesDetector
         {
             InitializeComponent();
             LogList.ItemsSource              = _log;
-            DetectionHistoryList.ItemsSource = _detectionHistory;
             _detectionHistory.CollectionChanged += (s, e) =>
-                NoDetectionsText.Visibility = _detectionHistory.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            {
+                if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
+                {
+                    // Always snap to the newest detection when it is a target species match;
+                    // for non-matches, shift the index so the currently viewed card stays visible.
+                    bool newIsMatch = _detectionHistory.Count > 0 && _detectionHistory[0].IsMatch;
+                    if (_detectionHistory.Count == 1 || newIsMatch)
+                    {
+                        _currentDetectionIndex = 0;
+                    }
+                    else
+                    {
+                        _currentDetectionIndex++;
+                    }
+                }
+                UpdateDetectionView();
+            };
+            UpdateDetectionView();
 
             // Show the actual target species from config
             TargetSpeciesText.Text = $"Target: {App.Config.TargetSpecies}";
@@ -755,6 +771,7 @@ namespace SpeciesDetector
         // entries are still on disk in snapshots/ regardless.
         private const int MaxDetectionHistory = 40;
         private readonly ObservableCollection<DetectionRecord> _detectionHistory = new ObservableCollection<DetectionRecord>();
+        private int _currentDetectionIndex = 0;
 
         /// <summary>
         /// Adds a detection (crop + summary) to the top of the in-app history list.
@@ -784,6 +801,74 @@ namespace SpeciesDetector
             {
                 AddLog($"  WARNING: Could not display detection image: {ex.Message}");
             }
+        }
+
+        private void UpdateDetectionView()
+        {
+            if (_detectionHistory.Count == 0)
+            {
+                NoDetectionsText.Visibility = Visibility.Visible;
+                NavigationPanel.Visibility = Visibility.Collapsed;
+                DetectionViewer.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            NoDetectionsText.Visibility = Visibility.Collapsed;
+            NavigationPanel.Visibility = Visibility.Visible;
+            DetectionViewer.Visibility = Visibility.Visible;
+
+            if (_currentDetectionIndex >= _detectionHistory.Count)
+                _currentDetectionIndex = _detectionHistory.Count - 1;
+            if (_currentDetectionIndex < 0)
+                _currentDetectionIndex = 0;
+
+            var record = _detectionHistory[_currentDetectionIndex];
+            ActiveDetectionCard.DataContext = record;
+
+            PrevDetectionBtn.IsEnabled = _currentDetectionIndex < _detectionHistory.Count - 1;
+            NextDetectionBtn.IsEnabled = _currentDetectionIndex > 0;
+            GoToLatestBtn.IsEnabled = _currentDetectionIndex > 0;
+
+            DetectionCounterText.Text = $"{_detectionHistory.Count - _currentDetectionIndex} / {_detectionHistory.Count}";
+        }
+
+        private void GoToLatestBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _currentDetectionIndex = 0;
+            UpdateDetectionView();
+        }
+
+        private void PrevDetectionBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentDetectionIndex < _detectionHistory.Count - 1)
+            {
+                _currentDetectionIndex++;
+                UpdateDetectionView();
+            }
+        }
+
+        private void NextDetectionBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentDetectionIndex > 0)
+            {
+                _currentDetectionIndex--;
+                UpdateDetectionView();
+            }
+        }
+
+        private void MinBtn_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MaxBtn_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        }
+
+        private void CloseBtn_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
         }
 
         // -----------------------------------------------------------------------
