@@ -15,7 +15,7 @@
 
     <Window.Resources>
         <local:LogLineColorConverter x:Key="LogLineColorConverter"/>
-
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#313244"/>
         <Style x:Key="TitleBarBtn" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#CDD6F4"/>

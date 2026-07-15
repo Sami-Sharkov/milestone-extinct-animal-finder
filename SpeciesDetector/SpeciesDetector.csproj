@@ -5,6 +5,10 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <ApplicationIcon>icon.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <PropertyGroup>
         <OutputType>WinExe</OutputType>
         <TargetFramework>net4.7.2</TargetFramework>
         <UseWPF>true</UseWPF>
