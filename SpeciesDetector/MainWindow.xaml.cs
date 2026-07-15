@@ -65,6 +65,8 @@ namespace SpeciesDetector
             InitializeComponent();
             LogList.ItemsSource              = _log;
             DetectionHistoryList.ItemsSource = _detectionHistory;
+            _detectionHistory.CollectionChanged += (s, e) =>
+                NoDetectionsText.Visibility = _detectionHistory.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
             // Show the actual target species from config
             TargetSpeciesText.Text = $"Target: {App.Config.TargetSpecies}";
@@ -547,6 +549,24 @@ namespace SpeciesDetector
                 _pollTimer.Stop();
                 AddLog("Auto-polling stopped.");
             }
+        }
+
+        private void OpenSnapshotsBtn_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Directory.CreateDirectory(SnapshotFolder);
+                System.Diagnostics.Process.Start("explorer.exe", $"\"{SnapshotFolder}\"");
+            }
+            catch (Exception ex)
+            {
+                AddLog($"  Could not open snapshots folder: {ex.Message}");
+            }
+        }
+
+        private void ClearLogBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _log.Clear();
         }
 
         // -----------------------------------------------------------------------
